@@ -1,0 +1,8 @@
+numpy
+pandas
+dvc
+dvc-s3
+matplotlib
+seaborn
+feast
+feast[redis]

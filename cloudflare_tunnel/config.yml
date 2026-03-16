@@ -1,0 +1,14 @@
+tunnel: mlops-tunnel
+credentials-file: /home/mlops/.cloudflared/7c21754f-84f3-4e2a-a298-efe0ecba502a.json
+
+ingress:
+  - hostname: mlflow.mlopsvn.space
+    service: http://localhost:5000
+
+  - hostname: ui.mlopsvn.space
+    service: http://localhost:7860
+
+  - hostname: api.mlopsvn.space
+    service: http://localhost:8000
+
+  - service: http_status:404

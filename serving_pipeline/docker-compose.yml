@@ -1,0 +1,43 @@
+services:
+  api:
+    image: ghcr.io/thuannan/aio2025-mlops-project01:main
+    container_name: churn-prediction-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_URI=${MODEL_URI}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+      - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+    volumes:
+      - ./api/data:/app/api/data
+      - ./api/reports:/app/api/reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - aio-network
+
+  ui:
+    image: ghcr.io/thuannan/aio2025-mlops-project01-ui:main
+    container_name: churn-prediction-ui
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      - API_BASE_URL=${API_BASE_URL}
+    depends_on:
+      - api
+    networks:
+      - aio-network
+
+
+networks:
+  aio-network:
+    external: true
