@@ -6,7 +6,6 @@ import mlflow.models
 import numpy as np
 import pandas as pd
 from loguru import logger
-from mlflow.models import MetricThreshold
 
 from src.mlflow_utils.experiment_tracker import ExperimentTracker
 
@@ -82,23 +81,36 @@ class ModelEvaluator:
         
         logger.info("Validating metrics against thresholds...")
 
-        thresholds = {}
+        failed_metrics = []
+        validated_count = 0
+
         for metric_name, threshold_value in thresholds_config.items():
-            if metric_name in metrics:
-                thresholds[metric_name] = MetricThreshold(
-                    threshold=threshold_value,
-                    greater_is_better=True
+            if metric_name not in metrics:
+                logger.warning(
+                    f"Metric '{metric_name}' is not available in evaluation results. Skipping."
                 )
-        try:
-            mlflow.validate_evaluation_results(
-                candidate_result=self.evaluation_results,#type:ignore
-                validation_thresholds=thresholds,
-            )
-            logger.info("All thresholds met!")
+                continue
+
+            actual_value = metrics[metric_name]
+            validated_count += 1
+
+            if actual_value < threshold_value:
+                failed_metrics.append((metric_name, actual_value, threshold_value))
+
+        if validated_count == 0:
+            logger.warning("No configured thresholds matched available metrics. Skipping validation.")
             return True
-        except Exception as e:
-            logger.error(f"Validation failed: {e}")
+
+        if failed_metrics:
+            for metric_name, actual_value, threshold_value in failed_metrics:
+                logger.error(
+                    f"Validation failed for '{metric_name}': "
+                    f"actual={actual_value:.6f} < threshold={threshold_value:.6f}"
+                )
             return False
+
+        logger.info("All thresholds met!")
+        return True
     
 
     def compare_models(

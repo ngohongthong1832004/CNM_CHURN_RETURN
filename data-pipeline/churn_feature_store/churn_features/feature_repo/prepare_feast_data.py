@@ -5,10 +5,20 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import os
 
+
+def _resolve_path(path, base_dir):
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(base_dir, path))
+
 def prepare_data_for_feast(input_path, output_path="data/processed_churn_data.parquet"):
     """
     Convert processed churn data to Feast-compatible format
     """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_path = _resolve_path(input_path, script_dir)
+    output_path = _resolve_path(output_path, script_dir)
+
     # Load your processed data
     df = pd.read_csv(input_path)
     

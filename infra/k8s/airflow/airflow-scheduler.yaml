@@ -35,8 +35,13 @@ spec:
               key: POSTGRES_PASSWORD
       containers:
       - name: scheduler
-        image: localhost:5000/airflow-mlops:3.1.5-custom
-        command: ["airflow", "scheduler"]
+        image: apache/airflow:3.1.5-python3.11
+        imagePullPolicy: IfNotPresent
+        command:
+        - bash
+        - -c
+        - |
+          pip install --no-cache-dir -r /opt/bootstrap/requirements.txt && exec airflow scheduler
         envFrom:
         - configMapRef:
             name: airflow-config
@@ -45,11 +50,22 @@ spec:
         env:
         - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
           value: "postgresql+psycopg2://airflow:airflow123@airflow-postgres:5432/airflow"
+        - name: AIRFLOW__API_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: airflow-secret
+              key: AIRFLOW__API_AUTH__JWT_SECRET
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /opt/airflow/logs
+        - name: model-pipeline
+          mountPath: /opt/model_pipeline
+        - name: data-pipeline
+          mountPath: /opt/data-pipeline
+        - name: airflow-bootstrap
+          mountPath: /opt/bootstrap
         resources:
           requests:
             memory: "1Gi"
@@ -64,13 +80,27 @@ spec:
             - -c
             - |
               CONNECTION_CHECK_MAX_COUNT=0 exec /entrypoint airflow jobs check --job-type SchedulerJob --hostname $(hostname)
-          initialDelaySeconds: 120
+          initialDelaySeconds: 300
+          timeoutSeconds: 10
           periodSeconds: 60
           failureThreshold: 5
       volumes:
       - name: dags
-        persistentVolumeClaim:
-          claimName: airflow-dags-pvc
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/infra/docker/airflow/dags
+          type: Directory
       - name: logs
         persistentVolumeClaim:
           claimName: airflow-logs-pvc
+      - name: model-pipeline
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/model_pipeline
+          type: Directory
+      - name: data-pipeline
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/data-pipeline
+          type: Directory
+      - name: airflow-bootstrap
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/infra/k8s/airflow
+          type: Directory

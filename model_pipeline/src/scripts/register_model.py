@@ -7,10 +7,11 @@ import os
 from src.mlflow_utils.model_registry import ModelRegistry
 from src.utility.helper import load_config
 
-os.environ["AWS_ACCESS_KEY_ID"] = "minio"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
-os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://localhost:9000"
+# Use setdefault so Docker/Airflow env vars take priority over these fallbacks
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "minio")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minio123")
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://localhost:9000")
 
 def main():
     parser = argparse.ArgumentParser(description="Manage model registry")
@@ -53,6 +54,10 @@ def main():
         return 
     
     config = load_config(args.config)
+
+    # Allow MLFLOW_TRACKING_URI env var to override config (e.g. inside Docker)
+    if os.environ.get("MLFLOW_TRACKING_URI"):
+        config["mlflow"]["tracking_uri"] = os.environ["MLFLOW_TRACKING_URI"]
 
     registry = ModelRegistry(
         tracking_uri=config["mlflow"]["tracking_uri"],

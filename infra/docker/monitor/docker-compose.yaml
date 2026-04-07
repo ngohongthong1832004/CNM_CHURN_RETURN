@@ -12,10 +12,6 @@ services:
     restart: unless-stopped
     ports:
       - "3100:3100"
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://localhost:3100/loki/api/v1/push"
     networks:
       - aio-network
   
@@ -29,10 +25,6 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
     restart: unless-stopped
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://localhost:3100/loki/api/v1/push"
     networks:
       - aio-network
 
@@ -51,10 +43,6 @@ services:
       retries: 5
     volumes:
       - grafana-storage:/var/lib/grafana
-    logging:
-      driver: loki
-      options:
-        loki-url: "http://localhost:3100/loki/api/v1/push"
     environment:
       - GF_INSTALL_PLUGINS=https://storage.googleapis.com/integration-artifacts/grafana-lokiexplore-app/grafana-lokiexplore-app-latest.zip;grafana-lokiexplore-app
     networks:

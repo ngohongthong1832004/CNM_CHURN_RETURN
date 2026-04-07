@@ -6,7 +6,7 @@ registry: data/registry.db
 # ONLINE STORE (Redis)
 online_store:
   type: redis
-  connection_string: localhost:6379
+  connection_string: ${FEAST_REDIS_CONNECTION_STRING}
 
 # OFFLINE STORE
 offline_store:

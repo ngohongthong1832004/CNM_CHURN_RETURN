@@ -77,11 +77,22 @@ x-airflow-common:
     AIRFLOW__EXECUTION_API__JWT_EXPIRATION_TIME: '600'
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # MLflow / MinIO — use Docker service names (not localhost)
+    MLFLOW_TRACKING_URI: 'http://mlflow_server:5000'
+    MLFLOW_S3_ENDPOINT_URL: 'http://minio:9000'
+    AWS_ACCESS_KEY_ID: 'minio'
+    AWS_SECRET_ACCESS_KEY: 'minio123'
+    AWS_DEFAULT_REGION: 'us-east-1'
+    FEAST_REDIS_CONNECTION_STRING: 'redis:6379'
+    PYTHONPATH: '/opt/model_pipeline'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    # Mount project source so DAG tasks can run model & data-pipeline scripts
+    - ../../../model_pipeline:/opt/model_pipeline
+    - ../../../data-pipeline:/opt/data-pipeline
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on

@@ -47,12 +47,13 @@ spec:
         - name: passwords-rw
           mountPath: /opt/airflow
       - name: init-db
-        image: localhost:5000/airflow-mlops:3.1.5-custom
+        image: apache/airflow:3.1.5-python3.11
+        imagePullPolicy: IfNotPresent
         command:
         - bash
         - -c
         - |
-          airflow db migrate
+          pip install --no-cache-dir -r /opt/bootstrap/requirements.txt && airflow db migrate
         envFrom:
         - configMapRef:
             name: airflow-config
@@ -61,15 +62,27 @@ spec:
         env:
         - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
           value: "postgresql+psycopg2://airflow:airflow123@airflow-postgres:5432/airflow"
+        - name: AIRFLOW__API_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: airflow-secret
+              key: AIRFLOW__API_AUTH__JWT_SECRET
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /opt/airflow/logs
+        - name: airflow-bootstrap
+          mountPath: /opt/bootstrap
       containers:
       - name: webserver
-        image: localhost:5000/airflow-mlops:3.1.5-custom
-        command: ["airflow", "api-server"]
+        image: apache/airflow:3.1.5-python3.11
+        imagePullPolicy: IfNotPresent
+        command:
+        - bash
+        - -c
+        - |
+          pip install --no-cache-dir -r /opt/bootstrap/requirements.txt && exec airflow api-server
         ports:
         - containerPort: 8080
           name: http
@@ -81,11 +94,22 @@ spec:
         env:
         - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
           value: "postgresql+psycopg2://airflow:airflow123@airflow-postgres:5432/airflow"
+        - name: AIRFLOW__API_AUTH__JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: airflow-secret
+              key: AIRFLOW__API_AUTH__JWT_SECRET
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
         - name: logs
           mountPath: /opt/airflow/logs
+        - name: model-pipeline
+          mountPath: /opt/model_pipeline
+        - name: data-pipeline
+          mountPath: /opt/data-pipeline
+        - name: airflow-bootstrap
+          mountPath: /opt/bootstrap
         - name: passwords-rw
           mountPath: /opt/airflow/simple_auth_manager_passwords.json.generated
           subPath: simple_auth_manager_passwords.json.generated
@@ -96,26 +120,45 @@ spec:
           limits:
             memory: "2Gi"
             cpu: "1000m"
+        startupProbe:
+          httpGet:
+            path: /ui/health
+            port: 8080
+          failureThreshold: 90
+          periodSeconds: 10
         livenessProbe:
           httpGet:
             path: /ui/health
             port: 8080
-          initialDelaySeconds: 120
+          initialDelaySeconds: 300
           periodSeconds: 30
           failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /ui/health
             port: 8080
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 10
       volumes:
       - name: dags
-        persistentVolumeClaim:
-          claimName: airflow-dags-pvc
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/infra/docker/airflow/dags
+          type: Directory
       - name: logs
         persistentVolumeClaim:
           claimName: airflow-logs-pvc
+      - name: model-pipeline
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/model_pipeline
+          type: Directory
+      - name: data-pipeline
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/data-pipeline
+          type: Directory
+      - name: airflow-bootstrap
+        hostPath:
+          path: /run/desktop/mnt/host/c/Users/bapho/workspace/IUH/CongNgheMoi/aio2025-mlops-project01-main/infra/k8s/airflow
+          type: Directory
       - name: passwords-ro
         secret:
           secretName: airflow-passwords

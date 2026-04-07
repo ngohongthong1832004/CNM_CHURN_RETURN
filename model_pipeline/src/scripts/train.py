@@ -18,10 +18,11 @@ from src.model.xgboost_trainer import GenericBinaryClassifierTrainer
 from src.utility.helper import load_config
 import os
 
-os.environ["AWS_ACCESS_KEY_ID"] = "minio"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
-os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://localhost:9000"
+# Use setdefault so Docker/Airflow env vars take priority over these fallbacks
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "minio")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minio123")
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://localhost:9000")
 
 
 
@@ -62,6 +63,10 @@ def main():
     if args.experiment_name:
         config["mlflow"]["experiment_name"] = args.experiment_name
     logger.info(f"Experiment name: {args.experiment_name}")
+
+    # Allow MLFLOW_TRACKING_URI env var to override config (e.g. inside Docker)
+    if os.environ.get("MLFLOW_TRACKING_URI"):
+        config["mlflow"]["tracking_uri"] = os.environ["MLFLOW_TRACKING_URI"]
     
     logger.info("Initializing MLflow experiment tracker...")
     tracker = ExperimentTracker(

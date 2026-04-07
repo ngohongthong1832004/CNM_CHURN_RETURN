@@ -13,11 +13,11 @@ from src.model.evaluator import ModelEvaluator
 from src.model.xgboost_trainer import ExperimentTracker
 from src.utility.helper import load_config
 
-# [IMPORTANT] SETUP docker, remember to get rid of these hardcoded!
-os.environ["AWS_ACCESS_KEY_ID"] = "minio"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
-os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://localhost:9000"
+# Use setdefault so Docker/Airflow env vars take priority over these fallbacks
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "minio")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "minio123")
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", "http://localhost:9000")
 
 
 def save_predictions_with_probabilities(
@@ -135,6 +135,10 @@ def main():
     
     logger.info("Loading configuration...")
     config = load_config(args.config)
+
+    # Allow MLFLOW_TRACKING_URI env var to override config (e.g. inside Docker)
+    if os.environ.get("MLFLOW_TRACKING_URI"):
+        config["mlflow"]["tracking_uri"] = os.environ["MLFLOW_TRACKING_URI"]
 
     if args.run_id and not args.model_uri:
         model_uri = f"runs:/{args.run_id}/{config['model']['name']}" #pattern1. models:/<model_id>

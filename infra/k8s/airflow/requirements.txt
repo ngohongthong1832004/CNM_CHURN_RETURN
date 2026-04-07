@@ -1,5 +1,6 @@
 # Database drivers
 psycopg2-binary==2.9.9
+apache-airflow==3.1.5
 
 # Kafka integration
 kafka-python==2.0.2
@@ -8,7 +9,7 @@ kafka-python==2.0.2
 pyspark==3.5.0
 
 # MLflow integration
-mlflow==2.15.0
+mlflow
 
 # Cloud storage
 boto3==1.34.59
@@ -20,8 +21,11 @@ feast==0.39.1
 # Data processing
 pandas==2.2.0
 numpy==1.26.4
-
-# Additional providers
-apache-airflow-providers-apache-kafka==1.4.0
-apache-airflow-providers-apache-spark==4.9.0
-apache-airflow-providers-amazon==8.19.0
+PyYAML==6.0.2
+loguru==0.7.2
+scikit-learn==1.5.2
+xgboost==2.1.1
+dvc==3.59.0
+dvc-s3==3.2.0
+matplotlib==3.9.2
+seaborn==0.13.2

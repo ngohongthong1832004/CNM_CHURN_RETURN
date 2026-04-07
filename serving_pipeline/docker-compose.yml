@@ -29,7 +29,7 @@ services:
     container_name: churn-prediction-ui
     restart: unless-stopped
     ports:
-      - "7860:7860"
+      - "7860:7823"
     environment:
       - API_BASE_URL=${API_BASE_URL}
     depends_on:
