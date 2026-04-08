@@ -276,8 +276,8 @@ def export_gold_parquet(**context):
 default_args = {
     "owner": "mlops",
     "depends_on_past": False,
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 3,
+    "retry_delay": timedelta(minutes=2),
     "email_on_failure": False,
 }
 
