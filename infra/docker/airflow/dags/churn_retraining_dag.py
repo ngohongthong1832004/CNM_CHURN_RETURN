@@ -48,6 +48,21 @@ MODELS = {
         "experiment": "test_churn_prediction_random_forest_v1.1",
         "artifact": "random_forest_churn",
     },
+    "xgboost": {
+        "config": "src/config/xgboost.yaml",
+        "experiment": "test_churn_prediction_xgboost_v1.1",
+        "artifact": "xgboost_churn",
+    },
+    "lightgbm": {
+        "config": "src/config/lightgbm.yaml",
+        "experiment": "test_churn_prediction_lightgbm_v1.1",
+        "artifact": "lightgbm_churn",
+    },
+    "catboost": {
+        "config": "src/config/catboost.yaml",
+        "experiment": "test_churn_prediction_catboost_v1.1",
+        "artifact": "catboost_churn",
+    },
 }
 
 
@@ -196,7 +211,8 @@ with DAG(
     dag_id="churn_retraining_pipeline",
     default_args=default_args,
     description=(
-        "Train logistic-regression / decision-tree / random-forest in parallel, "
+        "Train logistic-regression / decision-tree / random-forest / "
+        "xgboost / lightgbm / catboost in parallel, "
         "select best F1, evaluate, and register as champion"
     ),
     schedule="0 0 * * 0",   # weekly – Sunday midnight UTC

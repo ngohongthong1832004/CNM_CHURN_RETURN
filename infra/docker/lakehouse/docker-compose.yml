@@ -1,0 +1,99 @@
+services:
+  # ── Iceberg REST Catalog (Nessie) ──────────────────────────────────────────
+  nessie:
+    image: ghcr.io/projectnessie/nessie:latest
+    container_name: aio_nessie
+    ports:
+      - "19120:19120"
+    environment:
+      - QUARKUS_PROFILE=prod
+      - NESSIE_VERSION_STORE_TYPE=IN_MEMORY
+      # Catalog / warehouse config
+      - NESSIE_CATALOG_DEFAULT_WAREHOUSE=warehouse
+      - NESSIE_CATALOG_WAREHOUSES__WAREHOUSE__LOCATION=s3://lakehouse/
+      # MinIO S3 config
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ENDPOINT=http://minio:9000
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_PATH_STYLE_ACCESS=true
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_REGION=us-east-1
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_AUTH_TYPE=STATIC
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ACCESS_KEY_NAME=minio
+      - NESSIE_CATALOG_SERVICE_S3_DEFAULT_OPTIONS_ACCESS_KEY_SECRET=minio123
+    networks:
+      - aio-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v2/config"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── Tạo bucket lakehouse trên MinIO (chạy 1 lần) ──────────────────────────
+  mc-lakehouse:
+    image: minio/mc:latest
+    container_name: aio_mc_lakehouse
+    depends_on:
+      nessie:
+        condition: service_healthy
+    networks:
+      - aio-network
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio:9000 minio minio123 &&
+      mc mb --ignore-existing minio/lakehouse &&
+      echo 'Bucket lakehouse ready.';
+      exit 0;
+      "
+
+  # ── Trino SQL engine ───────────────────────────────────────────────────────
+  trino:
+    image: trinodb/trino:440
+    container_name: aio_trino
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./trino/etc:/etc/trino
+      - ./trino/catalog:/etc/trino/catalog
+    networks:
+      - aio-network
+    depends_on:
+      nessie:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Apache Superset ────────────────────────────────────────────────────────
+  superset:
+    build:
+      context: ./superset
+      dockerfile: Dockerfile
+    image: aio_superset
+    container_name: aio_superset
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: "aio2025-superset-secret-key-changeme"
+      SUPERSET_ADMIN_USERNAME: "admin"
+      SUPERSET_ADMIN_PASSWORD: "admin"
+      SUPERSET_ADMIN_EMAIL: "admin@superset.com"
+      SQLALCHEMY_DATABASE_URI: "sqlite:////app/superset_home/superset.db?check_same_thread=false"
+    volumes:
+      - superset-home:/app/superset_home
+      - ./superset/superset_config.py:/app/pythonpath/superset_config.py
+      - ./superset/init.sh:/app/docker/docker-init.sh
+    command: ["/bin/bash", "/app/docker/docker-init.sh"]
+    networks:
+      - aio-network
+    depends_on:
+      trino:
+        condition: service_healthy
+
+volumes:
+  superset-home:
+
+networks:
+  aio-network:
+    external: true

@@ -1,0 +1,52 @@
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_name: "test_churn_prediction_lightgbm_v1.1"
+  artifact_location: "s3://mlflow/"
+  registry_uri: "http://localhost:5000"
+  tags:
+    task: "churn_prediction"
+    purpose: "test"
+    model_family: "lightgbm"
+
+model:
+  model_type: "lightgbm"
+  name: "lightgbm_churn"
+  version: "1.0.0"
+  type: "classifier"
+  description: "LightGBM model for churn prediction"
+  train_test_split: 0.2
+  random_state: 42
+
+  parameters:
+    n_estimators: 300
+    num_leaves: 63          # 2^max_depth - 1 (max_depth=6)
+    max_depth: -1           # -1 = không giới hạn, kiểm soát qua num_leaves
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    min_child_samples: 20
+    reg_alpha: 0.1          # L1
+    reg_lambda: 1.0         # L2
+    class_weight: "balanced"
+    random_state: 42
+    n_jobs: -1
+    verbose: -1             # tắt log output
+
+evaluation:
+  thresholds:
+    accuracy_score: 0.8
+    f1_score: 0.8
+
+features:
+  target_column: churned
+  training_features:
+    - age
+    - gender
+    - tenure_months
+    - usage_frequency
+    - support_calls
+    - payment_delay_days
+    - subscription_type
+    - contract_length
+    - total_spend
+    - last_interaction_days

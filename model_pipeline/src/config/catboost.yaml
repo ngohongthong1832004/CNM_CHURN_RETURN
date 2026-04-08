@@ -1,0 +1,51 @@
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_name: "test_churn_prediction_catboost_v1.1"
+  artifact_location: "s3://mlflow/"
+  registry_uri: "http://localhost:5000"
+  tags:
+    task: "churn_prediction"
+    purpose: "test"
+    model_family: "catboost"
+
+model:
+  model_type: "catboost"
+  name: "catboost_churn"
+  version: "1.0.0"
+  type: "classifier"
+  description: "CatBoost model for churn prediction"
+  train_test_split: 0.2
+  random_state: 42
+
+  parameters:
+    iterations: 300
+    depth: 6
+    learning_rate: 0.05
+    l2_leaf_reg: 3.0        # L2 regularization
+    border_count: 128       # số bins cho numeric features
+    bagging_temperature: 1.0
+    random_strength: 1.0
+    class_weights: [1, 2]   # [weight_class_0, weight_class_1] — tăng weight churn=1
+    eval_metric: "F1"
+    random_seed: 42
+    thread_count: -1
+    verbose: 0              # tắt log output
+
+evaluation:
+  thresholds:
+    accuracy_score: 0.8
+    f1_score: 0.8
+
+features:
+  target_column: churned
+  training_features:
+    - age
+    - gender
+    - tenure_months
+    - usage_frequency
+    - support_calls
+    - payment_delay_days
+    - subscription_type
+    - contract_length
+    - total_spend
+    - last_interaction_days

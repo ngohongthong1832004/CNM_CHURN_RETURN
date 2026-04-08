@@ -10,6 +10,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
 from loguru import logger
 
 from src.mlflow_utils.experiment_tracker import ExperimentTracker
@@ -70,6 +73,9 @@ class GenericBinaryClassifierTrainer:
         'random_forest': RandomForestClassifier,
         'decision_tree': DecisionTreeClassifier,
         'logistic_regression': LogisticRegression,
+        'xgboost': XGBClassifier,
+        'lightgbm': LGBMClassifier,
+        'catboost': CatBoostClassifier,
     }
     
     def __init__(
@@ -174,7 +180,7 @@ class GenericBinaryClassifierTrainer:
         """Log feature importance metrics based on model type"""
         importance_dict = {}
         
-        if self.model_type in ['random_forest', 'decision_tree']:
+        if self.model_type in ['random_forest', 'decision_tree', 'xgboost', 'lightgbm', 'catboost']:
             if hasattr(self.model, 'feature_importances_'):
                 importance_dict = dict(zip(self.feature_names, self.model.feature_importances_))#type:ignore
         elif self.model_type == 'logistic_regression':

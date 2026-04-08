@@ -1,0 +1,20 @@
+services:
+  data-simulator:
+    build: .
+    container_name: data-simulator
+    volumes:
+      # Mount thư mục data-pipeline để đọc/ghi df_processed.csv
+      - ../data-pipeline:/data-pipeline
+    command:
+      - "--output-path"
+      - "/data-pipeline/data/processed/df_processed.csv"
+      - "--n-records"
+      - "100"
+      - "--mode"
+      - "append"
+    networks:
+      - aio-network
+
+networks:
+  aio-network:
+    external: true

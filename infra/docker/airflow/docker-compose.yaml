@@ -85,6 +85,7 @@ x-airflow-common:
     AWS_DEFAULT_REGION: 'us-east-1'
     FEAST_REDIS_CONNECTION_STRING: 'redis:6379'
     PYTHONPATH: '/opt/model_pipeline'
+    NESSIE_URI: 'http://nessie:19120/iceberg'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
@@ -93,6 +94,7 @@ x-airflow-common:
     # Mount project source so DAG tasks can run model & data-pipeline scripts
     - ../../../model_pipeline:/opt/model_pipeline
     - ../../../data-pipeline:/opt/data-pipeline
+    - ../../../data-simulator:/opt/data-simulator
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
