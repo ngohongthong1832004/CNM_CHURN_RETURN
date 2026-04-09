@@ -1,6 +1,8 @@
 services:
   api:
-    image: ghcr.io/thuannan/aio2025-mlops-project01:main
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: churn-prediction-api
     ports:
       - "8000:8000"
@@ -16,7 +18,7 @@ services:
       - ./api/reports:/app/api/reports
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-fL", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

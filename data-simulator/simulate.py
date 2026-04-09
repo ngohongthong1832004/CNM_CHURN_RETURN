@@ -1,82 +1,33 @@
 """
 Data Simulator — sinh dữ liệu khách hàng churn mới hàng ngày.
-Ghi vào Iceberg Bronze table (lakehouse.bronze.customer_events) trên MinIO/Nessie.
+Publish JSON records vào Kafka topic (default: churn.raw.events).
 
 Usage:
   python simulate.py --n-records 100
-  python simulate.py --n-records 50 --nessie-uri http://localhost:19120/iceberg
+  python simulate.py --n-records 100 --kafka-brokers broker-1:9094
 """
 
 import argparse
+import json
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
+from confluent_kafka import Producer
 from loguru import logger
-from pyiceberg.catalog import load_catalog
-from pyiceberg.schema import Schema
-from pyiceberg.types import (
-    DateType,
-    FloatType,
-    LongType,
-    NestedField,
-    StringType,
-    TimestamptzType,
-)
-
-
-def namespace_exists(catalog, namespace: tuple[str, ...]) -> bool:
-    """Compatibility helper for pyiceberg catalog APIs across versions."""
-    if hasattr(catalog, "namespace_exists"):
-        return catalog.namespace_exists(namespace)
-
-    if hasattr(catalog, "list_namespaces"):
-        try:
-            return namespace in catalog.list_namespaces()
-        except Exception:
-            return False
-
-    if hasattr(catalog, "load_namespace_properties"):
-        try:
-            catalog.load_namespace_properties(namespace)
-            return True
-        except Exception:
-            return False
-
-    return False
 
 # ── Phân phối dựa trên dataset gốc ──────────────────────────────────────────
-GENDER_CHOICES   = ["Male", "Female"]
-GENDER_PROBS     = [0.50, 0.50]
+GENDER_CHOICES     = ["Male", "Female"]
+GENDER_PROBS       = [0.50, 0.50]
 SUBSCRIPTION_TYPES = ["Basic", "Standard", "Premium"]
 SUBSCRIPTION_PROBS = [0.40, 0.35, 0.25]
-CONTRACT_LENGTHS = ["Monthly", "Quarterly", "Annual"]
-CONTRACT_PROBS   = [0.50, 0.30, 0.20]
+CONTRACT_LENGTHS   = ["Monthly", "Quarterly", "Annual"]
+CONTRACT_PROBS     = [0.50, 0.30, 0.20]
 SPEND_PARAMS = {
     "Basic":    (100,  600,  320, 100),
     "Standard": (250,  900,  550, 150),
     "Premium":  (450, 1200,  780, 180),
 }
-
-# ── Bronze Iceberg schema ────────────────────────────────────────────────────
-BRONZE_SCHEMA = Schema(
-    NestedField(1,  "customer_id",       LongType(),       required=True),
-    NestedField(2,  "age",               LongType()),
-    NestedField(3,  "gender",            StringType()),
-    NestedField(4,  "tenure",            LongType()),
-    NestedField(5,  "usage_frequency",   LongType()),
-    NestedField(6,  "support_calls",     LongType()),
-    NestedField(7,  "payment_delay",     LongType()),
-    NestedField(8,  "subscription_type", StringType()),
-    NestedField(9,  "contract_length",   StringType()),
-    NestedField(10, "total_spend",       FloatType()),
-    NestedField(11, "last_interaction",  LongType()),
-    NestedField(12, "churn",             LongType()),
-    NestedField(13, "ingest_date",       DateType()),
-    NestedField(14, "created_at",        TimestamptzType()),
-)
 
 
 # ── Churn probability ────────────────────────────────────────────────────────
@@ -91,13 +42,13 @@ def _churn_prob(support_calls, payment_delay, usage_freq, contract, tenure):
 
 
 # ── Sinh dữ liệu ────────────────────────────────────────────────────────────
-def generate_customers(n: int, start_id: int, seed: int | None = None) -> pd.DataFrame:
-    rng  = np.random.default_rng(seed)
-    now  = datetime.now(timezone.utc)
+def generate_customers(n: int, base_id: int, seed: int | None = None) -> pd.DataFrame:
+    rng   = np.random.default_rng(seed)
+    now   = datetime.now(timezone.utc)
     today = date.today()
 
     ages           = rng.integers(18, 71, size=n)
-    genders        = rng.choice(GENDER_CHOICES,   size=n, p=GENDER_PROBS)
+    genders        = rng.choice(GENDER_CHOICES,    size=n, p=GENDER_PROBS)
     tenures        = rng.integers(1, 61, size=n)
     usage_freqs    = rng.integers(1, 31, size=n)
     support_calls  = rng.integers(0, 11, size=n)
@@ -120,7 +71,7 @@ def generate_customers(n: int, start_id: int, seed: int | None = None) -> pd.Dat
     ])
 
     return pd.DataFrame({
-        "customer_id":       np.arange(start_id, start_id + n, dtype="int64"),
+        "customer_id":       np.arange(base_id, base_id + n, dtype="int64"),
         "age":               ages.astype("int64"),
         "gender":            genders,
         "tenure":            tenures.astype("int64"),
@@ -137,57 +88,68 @@ def generate_customers(n: int, start_id: int, seed: int | None = None) -> pd.Dat
     })
 
 
+def _to_json_safe(record: dict) -> dict:
+    """Convert numpy/date/datetime types to JSON-serializable Python types."""
+    safe = {}
+    for k, v in record.items():
+        if isinstance(v, datetime):          # datetime trước date (datetime là subclass của date)
+            safe[k] = v.isoformat()
+        elif isinstance(v, date):
+            safe[k] = v.isoformat()
+        elif isinstance(v, np.integer):
+            safe[k] = int(v)
+        elif isinstance(v, np.floating):
+            safe[k] = float(v)
+        else:
+            safe[k] = v
+    return safe
+
+
+def delivery_report(err, msg):
+    if err:
+        logger.error(f"Delivery failed for key {msg.key()}: {err}")
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Sinh data churn vào Iceberg Bronze")
-    parser.add_argument("--n-records",   type=int, default=100)
-    parser.add_argument("--nessie-uri",  default="http://nessie:19120/iceberg")
-    parser.add_argument("--minio-url",   default="http://minio:9000")
-    parser.add_argument("--minio-key",   default="minio")
-    parser.add_argument("--minio-secret",default="minio123")
-    parser.add_argument("--warehouse",   default="s3://lakehouse/")
-    parser.add_argument("--seed",        type=int, default=None)
+    parser = argparse.ArgumentParser(description="Sinh data churn và publish vào Kafka")
+    parser.add_argument("--n-records",     type=int,  default=100)
+    parser.add_argument("--kafka-brokers", default="broker-1:9094,broker-2:9094,broker-3:9094")
+    parser.add_argument("--kafka-topic",   default="churn.raw.events")
+    parser.add_argument("--seed",          type=int,  default=None)
     args = parser.parse_args()
 
-    catalog_props = {
-        "type": "rest",
-        "uri": args.nessie_uri,
-        "warehouse": args.warehouse,
-        "s3.endpoint": args.minio_url,
-        "s3.access-key-id": args.minio_key,
-        "s3.secret-access-key": args.minio_secret,
-        "s3.region": "us-east-1",
-        "s3.path-style-access": "true",
-        "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
-    }
+    # base_id từ UTC timestamp → unique mỗi lần chạy, tăng đơn điệu
+    base_id = int(datetime.now(timezone.utc).timestamp())
+    logger.info(f"Sinh {args.n_records} records, base_id={base_id}")
 
-    catalog = load_catalog("nessie", **catalog_props)
+    df = generate_customers(args.n_records, base_id, seed=args.seed)
 
-    # Tạo namespace + table nếu chưa có
-    if not namespace_exists(catalog, ("bronze",)):
-        catalog.create_namespace(("bronze",))
+    producer = Producer({
+        "bootstrap.servers": args.kafka_brokers,
+        "acks":              "all",
+        "retries":           3,
+        "retry.backoff.ms":  500,
+    })
 
-    if not catalog.table_exists("bronze.customer_events"):
-        catalog.create_table("bronze.customer_events", schema=BRONZE_SCHEMA)
-        logger.info("Created table bronze.customer_events")
+    published = 0
+    for record in df.to_dict(orient="records"):
+        safe = _to_json_safe(record)
+        producer.produce(
+            topic=args.kafka_topic,
+            key=str(safe["customer_id"]).encode("utf-8"),
+            value=json.dumps(safe).encode("utf-8"),
+            on_delivery=delivery_report,
+        )
+        producer.poll(0)
+        published += 1
 
-    table = catalog.load_table("bronze.customer_events")
+    producer.flush()
 
-    # Lấy max customer_id hiện tại
-    df_existing = table.scan(selected_fields=("customer_id",)).to_pandas()
-    start_id = int(df_existing["customer_id"].max()) + 1 if len(df_existing) else 1
-    logger.info(f"Records hiện tại: {len(df_existing):,} | Bắt đầu từ ID: {start_id}")
-
-    # Sinh và ghi
-    new_df = generate_customers(args.n_records, start_id, seed=args.seed)
-    arrow_table = pa.Table.from_pandas(new_df, schema=table.schema().as_arrow())
-    table.append(arrow_table)
-
-    churn_rate = new_df["churn"].mean()
+    churn_rate = df["churn"].mean()
     logger.info(
-        f"Đã ghi {args.n_records} records vào Bronze | "
-        f"Churn rate: {churn_rate:.1%} | "
-        f"Ngày: {date.today()}"
+        f"Published {published} records → topic '{args.kafka_topic}' | "
+        f"Churn rate: {churn_rate:.1%}"
     )
 
 

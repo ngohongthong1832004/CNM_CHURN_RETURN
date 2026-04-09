@@ -1,0 +1,12 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: aio_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TOKEN}
+    networks:
+      - aio-network
+
+networks:
+  aio-network:
+    external: true

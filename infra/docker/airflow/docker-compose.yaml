@@ -86,6 +86,8 @@ x-airflow-common:
     FEAST_REDIS_CONNECTION_STRING: 'redis:6379'
     PYTHONPATH: '/opt/model_pipeline'
     NESSIE_URI: 'http://nessie:19120/iceberg'
+    KAFKA_BROKERS: 'broker-1:9094,broker-2:9094,broker-3:9094'
+    KAFKA_TOPIC: 'churn.raw.events'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs

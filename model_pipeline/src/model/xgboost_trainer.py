@@ -6,6 +6,7 @@ import mlflow
 from mlflow.models import infer_signature
 import numpy as np
 import pandas as pd
+from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
@@ -170,6 +171,10 @@ class GenericBinaryClassifierTrainer:
         
         self.tracker.log_metric("train_accuracy", train_score)
         self.tracker.log_metric("test_accuracy", test_score)
+
+        training_f1 = f1_score(y_train, self.model.predict(X_train))
+        self.tracker.log_metric("training_f1_score", training_f1)
+        logger.info(f"Training F1 score: {training_f1:.4f}")
         
 
         self._log_feature_importance()

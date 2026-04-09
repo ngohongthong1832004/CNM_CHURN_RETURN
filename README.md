@@ -1,73 +1,68 @@
 # MLOps End-to-End: Customer Churn Prediction System
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![MLflow](https://img.shields.io/badge/MLflow-Latest-orange.svg)](https://mlflow.org/)
-[![Feast](https://img.shields.io/badge/Feast-Feature_Store-red.svg)](https://feast.dev/)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-326CE5.svg)](https://kubernetes.io/)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![MLflow](https://img.shields.io/badge/MLflow-2.15-orange.svg)](https://mlflow.org/)
+[![Airflow](https://img.shields.io/badge/Airflow-3.x-017CEE.svg)](https://airflow.apache.org/)
+[![Kafka](https://img.shields.io/badge/Kafka-KRaft-231F20.svg)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
 
-A **production-ready MLOps system** for customer churn prediction, demonstrating best practices in machine learning operations including data versioning, feature stores, experiment tracking, model serving, and infrastructure automation.
+Hệ thống MLOps end-to-end dự đoán khách hàng rời bỏ (churn), triển khai đầy đủ vòng đời ML từ sinh dữ liệu đến serving và monitoring.
+
+---
 
 ## 📖 Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
-- [Features](#features)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Pipelines](#pipelines)
 - [Infrastructure](#infrastructure)
-- [Monitoring & Observability](#monitoring--observability)
-- [Development](#development)
-- [Data Source](#data-source)
-- [References](#references)
+- [Monitoring](#monitoring)
 
 ---
 
 ## 🎯 Overview
 
-This project implements a complete MLOps pipeline for **customer churn prediction**, covering the entire machine learning lifecycle:
-
-- **Data Pipeline**: Version-controlled data with DVC, feature engineering with Feast, and Redis-backed online feature serving
-- **Model Pipeline**: XGBoost model training with MLflow experiment tracking, model registry, and automated evaluation
-- **Serving Pipeline**: FastAPI-based prediction service with Gradio UI and monitoring integration
-- **Infrastructure**: Kubernetes and Docker orchestration for PostgreSQL, MinIO, MLflow, Kafka, Airflow, and monitoring stack
-
-The system is designed for scalability, reproducibility, and production deployment.
+- **Data Simulator**: Sinh dữ liệu churn hàng ngày → publish lên Kafka → ghi vào Iceberg Bronze table
+- **Lakehouse**: ETL Bronze → Silver → Gold (Nessie + Trino + Superset), export parquet cho training
+- **Feature Store**: Feast apply + materialize features mới nhất vào Redis online store
+- **Model Pipeline**: Train 6 thuật toán song song, chọn best F1, register `champion` lên MLflow Registry
+- **Serving Pipeline**: FastAPI prediction service + Gradio UI + Evidently drift monitoring
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      MLOps Infrastructure                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌───────────────────┐      ┌──────────────────┐                │
-│  │  Data Pipeline    │      │  Model Pipeline  │                │
-│  ├───────────────────┤      ├──────────────────┤                │
-│  │ • DVC (S3/MinIO)  │      │ • MLflow Track   │                │
-│  │ • Feast Features  │─────▶│ • XGBoost Model  │                │
-│  │ • Redis Online    │      │ • Model Registry │                │
-│  └───────────────────┘      └────────┬─────────┘                │
-│           │                          │                          │
-│           │                          ▼                          │
-│           │                  ┌──────────────────┐               │
-│           └─────────────────▶│ Serving Pipeline │               │
-│                              ├──────────────────┤               │
-│                              │ • FastAPI        │               │
-│                              │ • Gradio UI      │               │
-│                              │ • Monitoring     │               │
-│                              └──────────────────┘               │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │              Infrastructure Services                       │ │
-│  ├────────────────────────────────────────────────────────────┤ │
-│  │ PostgreSQL | MinIO | MLflow | Kafka | Airflow | Monitoring │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Data Flow (Daily)                            │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  [data-simulator]                                                    │
+│    simulate.py ──► Kafka (churn.raw.events)                          │
+│                         │                                            │
+│                         ▼                                            │
+│  [lakehouse_etl]                                                     │
+│    Bronze ──► Silver (dedup/validate) ──► Gold (feature eng.)        │
+│                         │                                            │
+│              ┌──────────┴──────────┐                                 │
+│              ▼                     ▼                                 │
+│    [Trino + Superset]    export parquet                               │
+│       dashboard                    │                                 │
+│                                    ▼                                 │
+│  [churn_feature_pipeline]    [churn_retraining] (weekly)             │
+│    feast apply                train 6 models in parallel             │
+│    materialize ──► Redis      find best F1                           │
+│                               register champion ──► MLflow Registry  │
+│                                                          │            │
+│                                                          ▼            │
+│                                              [Serving Pipeline]       │
+│                                               FastAPI + Gradio UI     │
+│                                               Evidently monitoring    │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -76,73 +71,61 @@ The system is designed for scalability, reproducibility, and production deployme
 
 ```
 aio2025-mlops-project01/
-├── data-pipeline/                  # Data versioning and feature store
-│   ├── churn_feature_store/       # Feast feature definitions
-│   ├── data/                      # Raw and processed datasets
-│   ├── scripts/                   # Data processing scripts
-│   └── requirements.txt           # DVC, Feast, Redis dependencies
+├── data-simulator/                  # Kafka producer
+│   ├── simulate.py                 # Sinh records → publish JSON lên Kafka
+│   ├── Dockerfile
+│   └── requirements.txt
 │
-├── model_pipeline/                 # Model training and evaluation
+├── data-pipeline/                   # Feast feature store
+│   ├── churn_feature_store/
+│   │   └── churn_features/
+│   │       └── feature_repo/       # entities, data_sources, feature_views
+│   └── requirements.txt
+│
+├── model_pipeline/                  # Model training & evaluation
 │   ├── src/
-│   │   ├── config/               # Model configuration (YAML)
-│   │   ├── data/                 # Training and test datasets
-│   │   ├── mlflow_utils/         # Experiment & registry utilities
-│   │   ├── model/                # XGBoost trainer and evaluator
-│   │   ├── scripts/              # train.py, eval.py, register_model.py
-│   │   └── run_sh/               # Bash automation scripts
-│   ├── notebook/                 # Jupyter notebooks for testing
-│   └── mlruns/                   # Local MLflow artifacts (optional)
+│   │   ├── config/                 # YAML per model type (6 models)
+│   │   ├── model/                  # GenericBinaryClassifierTrainer
+│   │   ├── mlflow_utils/           # ExperimentTracker, ModelRegistry
+│   │   └── scripts/                # train.py, eval.py, register_model.py
+│   └── train_all.ps1
 │
-├── serving_pipeline/               # Model serving and UI
-│   ├── api/                       # FastAPI application
-│   │   ├── main.py               # API entry point
-│   │   ├── routers/              # Predict, health, monitor endpoints
-│   │   └── schemas.py            # Pydantic models
-│   ├── ui.py                     # Gradio web interface
-│   ├── load_model.py             # MLflow model loader
-│   ├── monitoring.py             # Metrics collection
-│   ├── docker-compose.yml        # API and UI containers
-│   └── requirements.txt          # FastAPI, MLflow, Gradio dependencies
+├── serving_pipeline/                # Model serving
+│   ├── api/
+│   │   ├── main.py
+│   │   ├── routers/                # predict, health, monitor
+│   │   └── schemas.py
+│   ├── ui.py                       # Gradio interface
+│   ├── load_model.py
+│   ├── monitoring.py               # Evidently drift
+│   └── docker-compose.yml
 │
-├── infra/                          # Infrastructure as Code
-│   ├── docker/                    # Docker Compose stacks
-│   │   ├── mlflow/               # MLflow + PostgreSQL + MinIO
-│   │   ├── kafka/                # 3-node Kafka cluster + UI
-│   │   ├── airflow/              # Airflow 3.x + PostgreSQL
-│   │   ├── monitor/              # Prometheus + Grafana + Loki
-│   │   └── run.sh                # Unified service control script
-│   └── k8s/                       # Kubernetes manifests
-│       ├── namespace.yaml        # MLOps namespace
-│       ├── postgres/             # Database deployment
-│       ├── minio/                # Object storage
-│       ├── mlflow/               # Tracking server
-│       ├── kafka/                # Kafka cluster
-│       ├── airflow/              # Workflow orchestration
-│       ├── dashboard/            # Kubernetes Dashboard
-│       └── deploy.sh             # K8s deployment automation
+├── infra/
+│   └── docker/
+│       ├── mlflow/                 # MLflow server + MySQL + MinIO
+│       ├── kafka/                  # 3-node Kafka cluster (KRaft)
+│       ├── lakehouse/              # Nessie + Trino + Superset
+│       ├── airflow/                # Airflow 3.x + DAGs
+│       ├── monitor/                # Prometheus + Grafana + Loki
+│       ├── run.ps1                 # PowerShell control script
+│       └── run.sh                  # Bash control script
 │
-└── README.md                       # This file
+├── start.ps1                        # One-click launcher (Windows)
+└── workflow.md                      # Chi tiết luồng chạy
 ```
 
 ---
 
 ## 🔧 Prerequisites
 
-### System Requirements
-- **OS**: Linux, macOS, or Windows with WSL2
-- **RAM**: 8GB minimum, 16GB recommended
-- **Storage**: 20GB+ free disk space
-- **Python**: 3.10 or higher
+- **OS**: Windows (PowerShell) hoặc Linux/macOS
+- **RAM**: 16GB recommended
+- **Storage**: 20GB+ free
+- **Docker Desktop**: 20.10+ với Docker Compose v2
+- **Python**: 3.11
 
-### Software Dependencies
-- **Docker**: 20.10+
-- **Docker Compose**: v2.0+
-- **Kubernetes** (optional): kubectl + cluster (minikube/kind/cloud)
-- **Git**: For repository management
-- **CUDA** (optional): For GPU-accelerated training
-
-### Create Docker Network
-```bash
+Tạo Docker network dùng chung:
+```powershell
 docker network create aio-network
 ```
 
@@ -150,109 +133,74 @@ docker network create aio-network
 
 ## 🚀 Quick Start
 
-### 1. Clone Repository
-```bash
+### Chạy toàn bộ hệ thống (one-click)
+
+```powershell
+# Clone
 git clone https://github.com/ThuanNaN/aio2025-mlops-project01.git
 cd aio2025-mlops-project01
+
+# Tạo network
+docker network create aio-network
+
+# Chạy từ đầu đến cuối (Infra → Data → Model → Serving)
+.\start.ps1
 ```
 
-### 2. Start Infrastructure (Docker)
-```bash
-cd infra/docker
-./run.sh start all
+`start.ps1` tự động:
+1. Start toàn bộ Docker services
+2. Trigger DAG `data_simulator` → `lakehouse_etl` → `churn_feature_pipeline`
+3. Trigger DAG `churn_retraining_pipeline` (train 6 models, register champion)
+4. Start serving API + UI
+
+### Các tùy chọn skip:
+
+```powershell
+# Bỏ qua infra (services đã chạy)
+.\start.ps1 -SkipInfra
+
+# Chỉ restart serving với model mới
+.\start.ps1 -SkipInfra -SkipData
+
+# Chỉ serving (model đã register sẵn)
+.\start.ps1 -SkipInfra -SkipData -SkipModel
 ```
 
-This starts MLflow, Kafka, Airflow, and monitoring services.
+### Access URLs sau khi start:
 
-**Access URLs:**
-- MLflow UI: http://localhost:5000
-- Airflow UI: http://localhost:8080 (admin/admin)
-- Grafana: http://localhost:3000 (admin/admin)
-- Kafka UI: http://localhost:9021
-- Prometheus: http://localhost:9090
-
-### 3. Setup Data Pipeline
-```bash
-cd data-pipeline
-
-# Create virtual environment
-conda create -n churn_mlops python=3.10 -y
-conda activate churn_mlops
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Pull versioned data
-dvc pull
-
-# Initialize Feast
-cd churn_feature_store
-feast apply
-```
-
-### 4. Train Model
-```bash
-cd model_pipeline/src
-
-# Configure environment (edit config/config.yaml)
-# Set MLflow tracking URI: http://localhost:5000
-
-# Run training
-bash run_sh/train.sh
-
-# Evaluate model
-bash run_sh/eval.sh
-
-# Register model
-bash run_sh/register_model.sh --model_name customer_churn_model
-```
-
-### 5. Serve Model
-```bash
-cd serving_pipeline
-
-# Set environment variables
-export MODEL_URI="models:/customer_churn_model/champion"
-export MLFLOW_TRACKING_URI="http://localhost:5000"
-export MLFLOW_S3_ENDPOINT_URL="http://localhost:9000"
-export AWS_ACCESS_KEY_ID="minioadmin"
-export AWS_SECRET_ACCESS_KEY="minioadmin"
-
-# Start API and UI
-docker-compose up -d
-
-# Access services
-# API: http://localhost:8000/docs
-# UI: http://localhost:7860
-```
+| Service | URL | Credentials |
+|---|---|---|
+| Serving API | http://localhost:8000/docs | — |
+| Gradio UI | http://localhost:7860 | — |
+| MLflow | http://localhost:5000 | — |
+| Airflow | http://localhost:8080 | airflow / airflow |
+| MinIO | http://localhost:9001 | minio / minio123 |
+| Superset | http://localhost:8088 | admin / admin |
+| Trino | http://localhost:8090 | — |
+| Nessie | http://localhost:19120 | — |
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
 
 ---
 
 ## 🔄 Pipelines
 
-### Data Pipeline
+### Data Simulator → Kafka → Lakehouse
 
-**Location**: [`data-pipeline/`](data-pipeline/)
+**Location**: [`data-simulator/`](data-simulator/), [`infra/docker/airflow/dags/`](infra/docker/airflow/dags/)
 
-**Workflow**:
-1. **Data Versioning**: DVC tracks datasets in S3/MinIO
-2. **Feature Engineering**: Transform raw customer data
-3. **Feature Store**: Register features with Feast
-4. **Online Serving**: Materialize features to Redis
+DAG `data_simulator` (23:45 UTC hàng ngày):
+1. `simulate_to_kafka` — sinh ~100 records, publish JSON lên Kafka topic `churn.raw.events`
+2. `kafka_to_bronze` — consume từ Kafka, append vào Iceberg `bronze.customer_events`
 
-**Key Commands**:
-```bash
-# Pull latest data
-dvc pull
+DAG `lakehouse_etl` (00:00 UTC hàng ngày):
+1. `bronze_to_silver` — dedup, validate
+2. `silver_to_gold` — feature engineering (`tenure_age_ratio`, `spend_per_usage`, ...)
+3. `export_gold_parquet` — export ra parquet cho Feast + training
 
-# Apply Feast features
-feast apply
-
-# Materialize to Redis
-feast materialize-incremental $(date +%Y-%m-%d)
-```
-
-📖 [Detailed Documentation](data-pipeline/README.md)
+DAG `churn_feature_pipeline` (00:30 UTC hàng ngày):
+1. `feast_apply` — đăng ký features
+2. `feast_materialize_incremental` — đẩy vào Redis online store
 
 ---
 
@@ -260,19 +208,20 @@ feast materialize-incremental $(date +%Y-%m-%d)
 
 **Location**: [`model_pipeline/`](model_pipeline/)
 
-**Workflow**:
-1. **Configuration**: Edit `src/config/config.yaml`
-2. **Training**: `bash run_sh/train.sh` → logs to MLflow
-3. **Evaluation**: `bash run_sh/eval.sh` → metrics + SHAP plots
-4. **Registration**: `bash run_sh/register_model.sh`
-5. **Promotion**: `bash run_sh/set_model_alias.sh --alias champion`
+**Supported Models**: `xgboost`, `lightgbm`, `catboost`, `random_forest`, `decision_tree`, `logistic_regression`
 
-**Key Scripts**:
-- `train.py`: XGBoost training with MLflow tracking
-- `eval.py`: Model evaluation and comparison
-- `register_model.py`: Register model to MLflow Registry
+DAG `churn_retraining_pipeline` (Chủ nhật 00:00 UTC):
+1. Train 6 models **song song** từ parquet Gold
+2. `find_best_model` — chọn run có `training_f1_score` cao nhất trong MLflow
+3. `evaluate_best_model` — validate threshold
+4. `register_champion` — register vào MLflow Registry, set alias `champion`
 
-📖 [Detailed Documentation](model_pipeline/README.md)
+Train thủ công (ngoài Airflow):
+```powershell
+cd model_pipeline
+$env:PYTHONPATH = (Get-Location).Path
+.\train_all.ps1
+```
 
 ---
 
@@ -280,130 +229,69 @@ feast materialize-incremental $(date +%Y-%m-%d)
 
 **Location**: [`serving_pipeline/`](serving_pipeline/)
 
-**Components**:
-- **FastAPI**: REST API with `/predict`, `/health`, `/metrics`
-- **Gradio**: Interactive web UI for predictions
-- **Monitoring**: Prometheus metrics export
-
-**API Example**:
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "age": 35,
-    "gender": "Male",
-    "tenure": 24,
-    "usage_frequency": 15,
-    "support_calls": 2,
-    "payment_delay": 5,
-    "subscription_type": "Premium",
-    "contract_length": "Annual",
-    "total_spend": 500,
-    "last_interaction": 10
-  }'
+```powershell
+cd serving_pipeline
+# Sửa .env: set MODEL_URI=models:/customer_churn_model@champion
+docker compose up -d
 ```
 
-**Response**:
-```json
-{
-  "churn_probability": 0.23,
-  "prediction": "Not Churn",
-  "model_version": "champion"
-}
+**Predict example**:
+```bash
+curl -X POST http://localhost:8000/predict/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "Age": 35, "Gender": "Male", "Tenure": 24,
+    "Usage_Frequency": 15, "Support_Calls": 2,
+    "Payment_Delay": 5, "Subscription_Type": "Premium",
+    "Contract_Length": "Annual", "Total_Spend": 500,
+    "Last_Interaction": 10
+  }'
 ```
 
 ---
 
 ## 🏗️ Infrastructure
 
-### Docker Deployment
-
 **Location**: [`infra/docker/`](infra/docker/)
 
-**Services**:
-- **MLflow**: Tracking server + PostgreSQL + MinIO
-- **Kafka**: 3-node cluster (KRaft mode) + Kafka UI
-- **Airflow**: Airflow 3.x with scheduler, webserver, PostgreSQL
-- **Monitoring**: Prometheus + Grafana + Loki
+| Stack | Services | Ports |
+|---|---|---|
+| `mlflow/` | MLflow + MySQL + MinIO | 5000, 9000, 9001 |
+| `kafka/` | 3-node Kafka (KRaft) | 9092, 9192, 9292 |
+| `lakehouse/` | Nessie + Trino + Superset | 19120, 8090, 8088 |
+| `monitor/` | Prometheus + Grafana + Loki | 9090, 3000 |
+| `airflow/` | Airflow 3.x (Celery) | 8080 |
 
-**Control Script**:
+**PowerShell**:
+```powershell
+cd infra/docker
+.\run.ps1 start all          # start toàn bộ
+.\run.ps1 start mlflow       # start service riêng lẻ
+.\run.ps1 stop all
+.\run.ps1 status
+```
+
+**Bash**:
 ```bash
 cd infra/docker
-
-# Start all services
-./run.sh start all
-
-# Start specific service
-./run.sh start mlflow
-
-# Stop services
-./run.sh stop all
-
-# Check status
+./run.sh up
+./run.sh down
 ./run.sh status
 ```
 
-📖 [Docker Documentation](infra/docker/README.md)
-
 ---
 
-### Kubernetes Deployment
+## 📊 Monitoring
 
-**Location**: [`infra/k8s/`](infra/k8s/)
+### Grafana (http://localhost:3000)
+- FastAPI request latency, throughput
+- Model prediction counts, error rates
+- Dashboard: [FastAPI Observability 16110](https://grafana.com/grafana/dashboards/16110-fastapi-observability/)
 
-**Architecture**:
-- Namespace: `mlops`
-- Services: PostgreSQL, MinIO, MLflow, Kafka (3-node), Airflow 3.x
-- Storage: PersistentVolumeClaims for data persistence
-- Dashboard: Kubernetes Dashboard for cluster management
-
-**Deploy**:
+### Evidently Drift
 ```bash
-cd infra/k8s
-
-# Deploy all resources
-./deploy.sh
-
-# Check status
-kubectl get all -n mlops
-
-# Get dashboard token
-./get-dashboard-token.sh
+GET http://localhost:8000/monitor/drift?format=json
 ```
 
-**Access Services** (with port-forward):
-```bash
-kubectl port-forward -n mlops svc/mlflow 5000:5000
-kubectl port-forward -n mlops svc/airflow-webserver 8080:8080
-kubectl port-forward -n mlops svc/minio-console 9001:9001
-```
-
-📖 [Kubernetes Documentation](infra/k8s/README.md)
-
----
-
-## 📊 Monitoring & Observability
-
-### Prometheus Metrics
-- API request latency and throughput
-- Model prediction counts
-- Error rates
-- System resource usage
-
-### Grafana Dashboards
-- FastAPI observability: [Dashboard 16110](https://grafana.com/grafana/dashboards/16110-fastapi-observability/)
-- Custom churn prediction metrics
-- Infrastructure monitoring
-
-### Loki Logs
-- Centralized log aggregation
-- Query logs from all services
-
-**Access**: http://localhost:3000 (admin/admin)
-
-**References**:
-- [FastAPI Observability Guide](https://github.com/Blueswen/fastapi-observability)
-
----
-#   C N M _ C H U R N _ R E T U R N  
- 
+### Superset (http://localhost:8088)
+- Dashboard trực tiếp từ Iceberg tables (Bronze / Silver / Gold) qua Trino

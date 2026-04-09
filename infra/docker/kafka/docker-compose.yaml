@@ -16,8 +16,10 @@ services:
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
     extra_hosts:
-       - "host.docker.internal:host-gateway"
-  
+      - "host.docker.internal:host-gateway"
+    networks:
+      - aio-network
+
   broker-2:
     image: confluentinc/cp-kafka:8.0.0
     ports:
@@ -35,15 +37,17 @@ services:
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
     extra_hosts:
-       - "host.docker.internal:host-gateway"
-    
+      - "host.docker.internal:host-gateway"
+    networks:
+      - aio-network
+
   broker-3:
     image: confluentinc/cp-kafka:8.0.0
     ports:
       - 9292:9092
     volumes:
       - broker-3-data:/var/lib/kafka/data
-    environment:  
+    environment:
       - CLUSTER_ID=1
       - KAFKA_NODE_ID=3
       - KAFKA_PROCESS_ROLES=controller,broker
@@ -54,9 +58,15 @@ services:
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
     extra_hosts:
-       - "host.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    networks:
+      - aio-network
 
 volumes:
   broker-1-data:
   broker-2-data:
   broker-3-data:
+
+networks:
+  aio-network:
+    external: true

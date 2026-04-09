@@ -1,142 +1,189 @@
 # End-to-End Workflow (Data to Prediction Result)
 
-This document summarizes the runtime and code flow across the whole project, from dataset preparation to model output in API/UI.
+Tài liệu này mô tả luồng chạy thực tế của toàn bộ hệ thống, từ sinh dữ liệu đến kết quả dự đoán.
 
-## 1) Data Preparation and Versioning
+---
+
+## 1) Data Simulation → Kafka → Iceberg Bronze
+
+DAG: `data_simulator` — Schedule: **23:45 UTC hàng ngày**
 
 Main components:
-- data-pipeline/data/raw and data-pipeline/data/processed
-- data-pipeline/scripts/processing+EDA.ipynb
-- data-pipeline/churn_feature_store/churn_features/feature_repo/prepare_feast_data.py
-- DVC metadata files (*.dvc)
+- `data-simulator/simulate.py` — Kafka producer
+- `infra/docker/airflow/dags/data_simulator_dag.py` — 2 tasks: `simulate_to_kafka` → `kafka_to_bronze`
+- Kafka topic: `churn.raw.events` (brokers: `broker-1:9094`, `broker-2:9094`, `broker-3:9094`)
+- Iceberg Bronze table: `bronze.customer_events` (Nessie REST Catalog / MinIO)
 
 Flow:
-1. Raw CSV data is cleaned/processed in notebook/scripts.
-2. Processed output (for example df_processed.csv) is transformed into Feast-compatible parquet in prepare_feast_data.py.
-3. DVC tracks/pulls data artifacts so runs are reproducible.
+1. `simulate_to_kafka`: `simulate.py` sinh ~100 records khách hàng mới với phân phối thực tế (age, tenure, spend, churn label...).
+2. Mỗi record được serialize thành JSON và publish lên Kafka topic `churn.raw.events` (key = `customer_id`).
+3. `kafka_to_bronze`: Airflow consumer group `airflow-bronze-consumer` poll Kafka, parse JSON, type-cast, và append vào Iceberg Bronze table qua Nessie REST catalog.
 
-Key output artifact:
-- data-pipeline/churn_feature_store/churn_features/feature_repo/data/processed_churn_data.parquet
+Output:
+- Iceberg table `bronze.customer_events` trên MinIO (`s3://lakehouse/`)
 
-## 2) Feature Store (Feast) Registration and Online Serving
+---
+
+## 2) Lakehouse ETL — Bronze → Silver → Gold → Parquet
+
+DAG: `lakehouse_etl` — Schedule: **00:00 UTC hàng ngày**
 
 Main components:
-- data-pipeline/churn_feature_store/churn_features/feature_repo/churn_entities.py
-- data-pipeline/churn_feature_store/churn_features/feature_repo/data_sources.py
-- data-pipeline/churn_feature_store/churn_features/feature_repo/feature_views.py
-- data-pipeline/scripts/sample_retrieval.py
+- `infra/docker/airflow/dags/lakehouse_etl_dag.py` — 4 tasks: `init_namespaces` → `bronze_to_silver` → `silver_to_gold` → `export_gold_parquet`
+- PyIceberg catalog (Nessie), MinIO storage
 
 Flow:
-1. Feast entity/customer key is defined in churn_entities.py.
-2. Offline source points to parquet in data_sources.py.
-3. Feature views define demographics and behavior feature groups in feature_views.py.
-4. feast apply registers objects in Feast registry.
-5. feast materialize-incremental pushes features to Redis online store.
-6. sample_retrieval.py fetches online features by customer_id.
+1. `init_namespaces`: tạo Iceberg namespaces `bronze`, `silver`, `gold` nếu chưa có.
+2. `bronze_to_silver`: đọc toàn bộ Bronze → dedup theo `customer_id` (giữ bản `created_at` mới nhất) → validate (age, tenure, total_spend) → ghi đè Silver table.
+3. `silver_to_gold`: tính derived features (`tenure_age_ratio`, `spend_per_usage`, `support_calls_per_tenure`, `spending_group`, `tenure_group`) → ghi đè Gold table với schema Feast-compatible.
+4. `export_gold_parquet`: export Gold table → file parquet tại `feature_repo/data/processed_churn_data.parquet`.
 
-Result:
-- Online feature vectors can be retrieved in real-time for serving.
+Output:
+- Iceberg tables: `silver.customers`, `gold.churn_features` trên MinIO
+- Parquet file: `data-pipeline/churn_feature_store/churn_features/feature_repo/data/processed_churn_data.parquet`
 
-## 3) Model Training with MLflow Tracking
+Trino + Superset query trực tiếp các Iceberg tables (Bronze/Silver/Gold) để dashboard.
+
+---
+
+## 3) Feature Store — Feast Apply + Materialize
+
+DAG: `churn_feature_pipeline` — Schedule: **00:30 UTC hàng ngày**
 
 Main components:
-- model_pipeline/src/scripts/train.py
-- model_pipeline/src/model/xgboost_trainer.py (GenericBinaryClassifierTrainer + BinaryClassifierWrapper)
-- model_pipeline/src/config/*.yaml
-- model_pipeline/src/mlflow_utils/experiment_tracker.py
+- `data-pipeline/churn_feature_store/churn_features/feature_repo/churn_entities.py`
+- `data-pipeline/churn_feature_store/churn_features/feature_repo/data_sources.py`
+- `data-pipeline/churn_feature_store/churn_features/feature_repo/feature_views.py`
 
 Flow:
-1. train.py loads config and training data (csv/parquet).
-2. Categorical columns are encoded with LabelEncoder.
-3. GenericBinaryClassifierTrainer.prepare_data() splits train/validation.
-4. GenericBinaryClassifierTrainer.train() trains selected model type (logistic_regression / decision_tree / random_forest).
-5. Metrics and feature importance are logged to MLflow.
-6. save_model() logs an MLflow pyfunc model artifact with wrapper logic.
+1. `feast_apply`: đăng ký entity, data source, feature views vào Feast registry (đọc từ parquet do Lakehouse ETL export).
+2. `feast_materialize_incremental`: đẩy features mới nhất từ parquet vào Redis online store.
 
-Result:
-- MLflow run_id + model artifact path (runs:/<run_id>/<model_name>)
+Output:
+- Redis online store: feature vectors có thể truy xuất real-time theo `customer_id`.
 
-## 4) Evaluation and Registry Lifecycle
+---
+
+## 4) Model Training — churn_retraining_pipeline
+
+DAG: `churn_retraining_pipeline` — Schedule: **00:00 UTC Chủ nhật (weekly)**
 
 Main components:
-- model_pipeline/src/scripts/eval.py
-- model_pipeline/src/model/evaluator.py
-- model_pipeline/src/scripts/register_model.py
-- model_pipeline/src/mlflow_utils/model_registry.py
+- `model_pipeline/src/scripts/train.py`
+- `model_pipeline/src/model/xgboost_trainer.py` — `GenericBinaryClassifierTrainer` + `BinaryClassifierWrapper`
+- `model_pipeline/src/config/*.yaml` — config riêng cho từng model type
+- `model_pipeline/src/mlflow_utils/experiment_tracker.py`
 
 Flow:
-1. eval.py loads model via run_id/model_uri and evaluation dataset.
-2. evaluator.py runs mlflow.models.evaluate() and optionally threshold validation.
-3. Optional prediction output CSV is generated and logged.
-4. register_model.py registers model, sets alias (staging/champion/production), and promotes model.
+1. Train 6 models **song song** từ parquet (`processed_churn_data.parquet`):
+   - `logistic_regression`, `decision_tree`, `random_forest`, `xgboost`, `lightgbm`, `catboost`
+2. Mỗi model: LabelEncoder cho categorical columns → `prepare_data()` split train/val → `train()` → log metrics + feature importance vào MLflow.
+3. `save_model()`: log MLflow pyfunc artifact với `BinaryClassifierWrapper` (hỗ trợ `return_probs`, `return_both`).
 
-Result:
-- Versioned and aliased model in MLflow registry.
+Output:
+- MLflow run per model: `run_id`, metrics (`training_f1_score`, `train_accuracy`, `test_accuracy`), artifact path.
 
-## 5) Serving API Runtime Flow
+---
+
+## 5) Model Evaluation & Registry
+
+Tiếp nối trong DAG `churn_retraining_pipeline`:
 
 Main components:
-- serving_pipeline/api/main.py
-- serving_pipeline/api/routers/predict.py
-- serving_pipeline/pre_processing.py
-- serving_pipeline/load_model.py
-- serving_pipeline/api/routers/health.py
-- serving_pipeline/api/routers/monitor.py
-- serving_pipeline/monitoring.py
+- `model_pipeline/src/scripts/eval.py`
+- `model_pipeline/src/scripts/register_model.py`
+- `model_pipeline/src/mlflow_utils/model_registry.py`
+
+Flow:
+1. `find_best_model`: query MLflow tìm run có `training_f1_score` cao nhất trong các experiments vừa train.
+2. `evaluate_best_model`: chạy `eval.py` với run_id của model tốt nhất — validate threshold, optional export predictions CSV.
+3. `register_champion`: `mlflow.register_model()` → set alias `champion` → model sẵn sàng cho serving.
+
+Output:
+- Model version trong MLflow Registry với alias `champion`.
+- Serving dùng URI: `models:/customer_churn_model@champion`
+
+---
+
+## 6) Serving API
+
+Main components:
+- `serving_pipeline/api/main.py`
+- `serving_pipeline/api/routers/predict.py`
+- `serving_pipeline/pre_processing.py`
+- `serving_pipeline/load_model.py`
+- `serving_pipeline/api/routers/monitor.py`
+- `serving_pipeline/monitoring.py`
 
 Prediction flow:
-1. Request hits POST /predict/ (single) or /predict/batch.
-2. Input is validated in pre_processing.validate_input().
-3. Schema fields are mapped to model fields via map_schema_to_preprocessing().
-4. get_model() lazily loads MLflow model once using MODEL_URI + MLFLOW_TRACKING_URI.
-5. Model predicts churn (0/1).
-6. Input + prediction are asynchronously appended to production.csv for drift monitoring.
+1. `POST /predict/` (single) hoặc `/predict/batch`
+2. Input validated bởi `pre_processing.validate_input()`.
+3. `get_model()` lazy-load MLflow pyfunc model một lần duy nhất (MODEL_URI + MLFLOW_TRACKING_URI).
+4. Model predict churn (0/1), trả về prediction + probability.
+5. Input + prediction async append vào `production.csv` cho drift monitoring.
 
 Monitoring flow:
-1. /monitor/drift loads reference and current production data.
-2. monitoring.generate_drift_report() runs Evidently metrics.
-3. JSON drift metrics (or HTML report) are returned.
+1. `GET /monitor/drift` → load reference data + production data.
+2. `monitoring.generate_drift_report()` chạy Evidently metrics.
+3. Trả về JSON metrics hoặc HTML report.
 
-## 6) UI Runtime Flow (Gradio)
+---
+
+## 7) UI — Gradio
 
 Main component:
-- serving_pipeline/ui.py
+- `serving_pipeline/ui.py`
 
-Tabs and behavior:
-1. Single Prediction tab: user enters fields -> UI sends payload to API /predict/.
-2. Batch Prediction tab: upload CSV -> UI sends records to API /predict/batch.
-3. Customer Data Check tab:
-   - Calls get_customer_features() from sample_retrieval.py (Feast online lookup).
-   - Maps retrieved feature columns to API schema.
-   - Calls API /predict/ and renders result.
+Tabs:
+1. **Single Prediction**: nhập fields → POST `/predict/`.
+2. **Batch Prediction**: upload CSV → POST `/predict/batch`.
+3. **Customer Data Check**: lookup Feast online features theo `customer_id` → POST `/predict/`.
 
-Networking details used in docker compose:
-- UI internal app port: 7823
-- Host exposed UI port: 7860 (7860:7823)
-- UI to API URL inside compose network: http://api:8000
+Network (docker compose):
+- UI internal port: `7823` → host port: `7860`
+- UI → API: `http://api:8000` (internal `aio-network`)
 
-## 7) Infrastructure Dependencies
+---
 
-Main stacks:
-- infra/docker/mlflow: MLflow + MySQL + MinIO
-- infra/docker/kafka: Kafka cluster
-- infra/docker/monitor: Prometheus + Grafana + Loki
-- infra/docker/airflow: orchestration stack
+## 8) Infrastructure
 
-Core runtime dependency for prediction:
-- API requires MLflow + MinIO access (MODEL_URI artifact lookup)
-- UI requires API
-- Optional feature store retrieval requires Feast registry + Redis online store
+Docker stacks (tất cả dùng `aio-network`):
 
-## 8) Where Final Results Appear
+| Stack | Services | Ports |
+|---|---|---|
+| `infra/docker/mlflow` | MLflow server + MySQL + MinIO | MLflow:5000, MinIO:9000/9001 |
+| `infra/docker/kafka` | 3-node Kafka (KRaft) | broker-1:9092, broker-2:9192, broker-3:9292 |
+| `infra/docker/lakehouse` | Nessie + Trino + Superset | Nessie:19120, Trino:8090, Superset:8088 |
+| `infra/docker/monitor` | Prometheus + Grafana + Loki | Grafana:3000, Prometheus:9090 |
+| `infra/docker/airflow` | Airflow 3.x (CeleryExecutor) + PostgreSQL + Redis | Airflow:8080 |
 
-User-facing outputs:
-- API docs: http://localhost:8000/docs
-- UI: http://localhost:7860
-- MLflow runs/models: http://localhost:5000
+Startup order: `mlflow` → `lakehouse` → `kafka` → `monitor` → `airflow`
 
-Persisted artifacts:
-- Online features: Redis (Feast materialization)
-- Model artifacts: MinIO via MLflow
-- Prediction logs for drift: serving_pipeline/data_model/production/production.csv
-- Drift reports (optional save): serving_pipeline/reports/drift/*
+Airflow DAG schedule order hàng ngày:
+```
+23:45  data_simulator          (simulate → Kafka → Bronze)
+00:00  lakehouse_etl           (Bronze → Silver → Gold → parquet)
+00:30  churn_feature_pipeline  (feast apply + materialize → Redis)
+Sun    churn_retraining_pipeline (train → best → champion)
+```
+
+Runtime dependencies cho serving:
+- API cần: MLflow server + MinIO (load model artifact)
+- UI cần: API
+- Customer lookup (Feast) cần: Feast registry + Redis online store
+
+---
+
+## 9) Kết quả cuối cùng
+
+| Output | URL / Path |
+|---|---|
+| Serving API docs | http://localhost:8000/docs |
+| Gradio UI | http://localhost:7860 |
+| MLflow experiments/models | http://localhost:5000 |
+| Airflow DAG monitor | http://localhost:8080 |
+| Superset dashboard | http://localhost:8088 |
+| Grafana dashboard | http://localhost:3000 |
+| Prediction logs (drift) | `serving_pipeline/api/data/production/production.csv` |
+| Model artifacts | MinIO `s3://mlflow/` via MLflow |
+| Lakehouse data | MinIO `s3://lakehouse/` (Iceberg tables) |

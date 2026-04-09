@@ -2,16 +2,16 @@ services:
   data-simulator:
     build: .
     container_name: data-simulator
-    volumes:
-      # Mount thư mục data-pipeline để đọc/ghi df_processed.csv
-      - ../data-pipeline:/data-pipeline
+    environment:
+      - KAFKA_BROKERS=broker-1:9094,broker-2:9094,broker-3:9094
+      - KAFKA_TOPIC=churn.raw.events
     command:
-      - "--output-path"
-      - "/data-pipeline/data/processed/df_processed.csv"
       - "--n-records"
       - "100"
-      - "--mode"
-      - "append"
+      - "--kafka-brokers"
+      - "broker-1:9094,broker-2:9094,broker-3:9094"
+      - "--kafka-topic"
+      - "churn.raw.events"
     networks:
       - aio-network
 

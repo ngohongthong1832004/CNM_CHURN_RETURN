@@ -1,14 +1,14 @@
-tunnel: mlops-tunnel
-credentials-file: /home/mlops/.cloudflared/7c21754f-84f3-4e2a-a298-efe0ecba502a.json
-
-ingress:
-  - hostname: mlflow.mlopsvn.space
-    service: http://localhost:5000
-
-  - hostname: ui.mlopsvn.space
-    service: http://localhost:7860
-
-  - hostname: api.mlopsvn.space
-    service: http://localhost:8000
-
-  - service: http_status:404
+# Reference only for Cloudflare Tunnel running in Docker token mode.
+# The real ingress config is managed in Cloudflare Zero Trust Dashboard.
+#
+# All services below are reachable from `aio-network`, so use container names,
+# not localhost.
+#
+# Recommended published application routes:
+#
+# api.mlopsvn.space.ngohongthong.studio      -> http://churn-prediction-api:8000
+# ui.mlopsvn.space.ngohongthong.studio       -> http://churn-prediction-ui:7823
+# mlflow.mlopsvn.space.ngohongthong.studio   -> http://mlflow_server:5000
+# airflow.mlopsvn.space.ngohongthong.studio  -> http://airflow-airflow-apiserver-1:8080
+# superset.mlopsvn.space.ngohongthong.studio -> http://aio_superset:8088
+# grafana.mlopsvn.space.ngohongthong.studio  -> http://aivn-grafana:3000
