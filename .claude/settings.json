@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(python -c \"import sys,json; h=json.load\\(sys.stdin\\); print\\('Status:', h['Status']\\); [print\\(f'[{l[\\\\\"Start\\\\\"]}] ExitCode={l[\\\\\"ExitCode\\\\\"]} Output:', l['Output'][-300:]\\) for l in h.get\\('Log',[]\\)]\")",
+      "Bash(nslookup api.mlopsvn.space.ngohongthong.studio)",
+      "Bash(nslookup ui.mlopsvn.space.ngohongthong.studio)",
+      "Bash(curl -s -o /dev/null -w \"api: HTTP %{http_code}\\\\n\" https://api.mlopsvn.space.ngohongthong.studio/health/ --max-time 10)",
+      "Bash(curl -s -o /dev/null -w \"mlflow: HTTP %{http_code}\\\\n\" https://mlflow.mlopsvn.space.ngohongthong.studio/ --max-time 10)",
+      "Bash(curl -s -o /dev/null -w \"airflow: HTTP %{http_code}\\\\n\" https://airflow.mlopsvn.space.ngohongthong.studio/ --max-time 10)",
+      "Bash(curl -v https://api.mlopsvn.space.ngohongthong.studio/health/ --max-time 10)",
+      "Bash(docker run:*)"
+    ]
+  }
+}

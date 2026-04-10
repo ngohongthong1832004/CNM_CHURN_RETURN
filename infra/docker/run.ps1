@@ -123,6 +123,33 @@ function Ensure-MlflowEnvFile {
     $content | Set-Content -Path $envPath -Encoding ASCII
 }
 
+function Ensure-MinioBuckets {
+    $requiredBuckets = @("mlflow")
+    $deadline = (Get-Date).AddSeconds(60)
+
+    # Wait until MinIO container is running
+    while ((Get-Date) -lt $deadline) {
+        $state = (& docker inspect --format "{{.State.Status}}" aio_minio 2>$null)
+        if ($state -eq "running") { break }
+        Start-Sleep -Seconds 2
+    }
+
+    foreach ($bucket in $requiredBuckets) {
+        $deadline2 = (Get-Date).AddSeconds(30)
+        $created = $false
+        while ((Get-Date) -lt $deadline2) {
+            & docker exec aio_minio mc mb --ignore-existing "minio/$bucket" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { $created = $true; break }
+            Start-Sleep -Seconds 3
+        }
+        if ($created) {
+            Write-Success "  MinIO bucket '$bucket' is ready."
+        } else {
+            Write-Warn "  WARNING: Could not ensure bucket '$bucket' -- check MinIO manually."
+        }
+    }
+}
+
 function Ensure-AirflowDirectories {
     $airflowDir = Join-Path $script:ScriptDir "airflow"
     foreach ($folder in @("logs", "plugins", "config")) {
@@ -189,6 +216,7 @@ function Start-Services {
         if ($name -eq "mlflow") {
             Write-Warn "  Waiting 10s for MinIO to be ready..."
             Start-Sleep -Seconds 10
+            Ensure-MinioBuckets
         }
         if ($name -eq "lakehouse") {
             Write-Warn "  Waiting 15s for Nessie + Trino to be ready..."

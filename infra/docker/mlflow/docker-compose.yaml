@@ -42,13 +42,16 @@ services:
       - .env
     entrypoint: >
       /bin/sh -c "
-      /tmp/wait-for-it.sh minio:9000 &&
-      /usr/bin/mc alias set minio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
-      /usr/bin/mc mb minio/mlflow;
+      echo 'Waiting for MinIO to be ready...';
+      until /usr/bin/mc alias set minio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} > /dev/null 2>&1; do
+        echo 'MinIO not ready yet, retrying in 3s...';
+        sleep 3;
+      done;
+      echo 'MinIO ready. Creating buckets...';
+      /usr/bin/mc mb --ignore-existing minio/mlflow;
+      echo 'Bucket mlflow ready.';
       exit 0;
       "
-    volumes:
-      - ./wait-for-it.sh:/tmp/wait-for-it.sh
 
   mlflow_server:
     restart: always
