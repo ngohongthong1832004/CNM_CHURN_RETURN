@@ -284,9 +284,12 @@ cd infra/docker
 ## 📊 Monitoring
 
 ### Grafana (http://localhost:3000)
-- FastAPI request latency, throughput
-- Model prediction counts, error rates
-- Dashboard: [FastAPI Observability 16110](https://grafana.com/grafana/dashboards/16110-fastapi-observability/)
+- Pre-provisioned folder `MLOps Monitoring` với 3 dashboard:
+- `MLOps Infrastructure Overview`: CPU, RAM, disk, network, service health
+- `MLOps GPU Overview`: GPU utilization, temperature, frame buffer memory
+- `MLOps Observability Overview`: Prometheus scrape health, scrape duration, target status
+- Datasources `Prometheus` và `Loki` được tạo tự động khi start stack monitor
+- Hiện chưa có dashboard request latency / prediction counts cho FastAPI vì service chưa expose endpoint `/metrics` để Prometheus scrape
 
 ### Evidently Drift
 ```bash

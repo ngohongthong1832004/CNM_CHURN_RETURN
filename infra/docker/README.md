@@ -106,6 +106,7 @@ Components:
 - System metrics monitoring with Prometheus
 - GPU monitoring for ML workloads
 - Pre-configured Grafana with Loki plugin
+- Auto-provisioned Grafana datasources and MLOps dashboards from `monitor/grafana/`
 - Docker container logging integration
 
 **Default Credentials:**
