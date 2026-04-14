@@ -57,7 +57,7 @@ if (-not $Force) {
 # COMPOSE FILES -- thu tu nguoc lai voi thu tu khoi dong
 # =============================================================================
 $composeFiles = @(
-    @{ Path = "$ROOT\cloudflare_tunnel\docker-compose.yml";      Label = "Cloudflare Tunnel" },
+    # @{ Path = "$ROOT\cloudflare_tunnel\docker-compose.yml";      Label = "Cloudflare Tunnel" },
     @{ Path = "$ROOT\serving_pipeline\docker-compose.yml";       Label = "Serving Pipeline" },
     @{ Path = "$ROOT\data-simulator\docker-compose.yml";         Label = "Data Simulator" },
     @{ Path = "$ROOT\infra\docker\monitor\docker-compose.yaml";  Label = "Monitor (Grafana/Prometheus/Loki)" },
