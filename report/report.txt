@@ -9,7 +9,7 @@
 Trường:      Đại học Công nghiệp TP.HCM (IUH)
 Khoa:        Công nghệ Thông tin
 Năm học:     2024–2025
-Ngày nộp:    2025-04-12
+Ngày nộp:    2026-04-16
 
 ================================================================================
 MỤC LỤC
@@ -152,8 +152,10 @@ mở và phổ biến trong ngành.
       Apache Iceberg, Project Nessie và Apache Trino, cung cấp khả năng quản
       lý dữ liệu có phiên bản (data versioning) và truy vấn phân tán.
 
-  (3) Tích hợp Feature Store (Feast + Redis) cho phép phục vụ features theo
-      thời gian thực (real-time feature serving) trong quá trình inference.
+  (3) Tích hợp Feature Store (Feast 0.58.0 + Redis) cho phép phục vụ features
+      theo thời gian thực (real-time feature serving) trong quá trình inference.
+      Đồng bộ version Feast giữa Airflow workers và API container để đảm bảo
+      nhất quán Redis key format (entity_key_serialization_version: 3).
 
   (4) Xây dựng framework huấn luyện mô hình tổng quát (GenericBinaryClassifier
       Trainer) hỗ trợ 6 thuật toán khác nhau với cùng một interface, dễ dàng
@@ -341,26 +343,32 @@ Hệ thống sử dụng các công nghệ và công cụ sau:
   - Project Nessie: Git-like data catalog cho Iceberg tables với versioning
   - MinIO: Object storage tương thích S3, lưu trữ Iceberg data files và
     MLflow artifacts
+  - pyiceberg >= 0.8.0: Python client cho Iceberg (0.8+ tương thích numpy >= 2.0)
   - Apache Trino: Distributed SQL query engine cho Iceberg tables
   - Apache Superset: Business intelligence và data visualization
   - MySQL: Backend database cho MLflow tracking server
 
+  Dependency quan trọng (numpy 2.x compatibility chain):
+  - numpy >= 2.0.0, pandas >= 2.2.2, pyarrow >= 16.0.0
+  - feast 0.58.0 yêu cầu numpy >= 2.0.0 → toàn bộ stack phải dùng numpy 2.x
+
   Feature Store:
-  - Feast (Feature Store): Định nghĩa, đăng ký và materialize features
+  - Feast 0.58.0: Định nghĩa, đăng ký và materialize features
+    (entity_key_serialization_version: 3, tương thích Redis key format mới)
   - Redis 7: Online feature store cho low-latency feature retrieval
 
   Data Versioning:
   - DVC (Data Version Control): Version control cho datasets và ML artifacts
 
   Model Training và Tracking:
-  - MLflow 2.15: Experiment tracking, model registry và artifact management
-  - scikit-learn: Logistic Regression, Decision Tree, Random Forest
-  - XGBoost: XGBClassifier
-  - LightGBM: LGBMClassifier
-  - CatBoost: CatBoostClassifier
+  - MLflow 3.x (3.11+): Experiment tracking, model registry và artifact management
+  - scikit-learn >= 1.5.0: Logistic Regression, Decision Tree, Random Forest
+  - XGBoost >= 2.1.1: XGBClassifier
+  - LightGBM >= 4.5.0: LGBMClassifier
+  - CatBoost >= 1.2.7: CatBoostClassifier
 
   Pipeline Orchestration:
-  - Apache Airflow 3.x (CeleryExecutor + PostgreSQL + Redis): DAG-based workflow
+  - Apache Airflow 3.1.1 (CeleryExecutor + PostgreSQL + Redis): DAG-based workflow
     scheduling và orchestration
 
   Model Serving:
@@ -428,7 +436,7 @@ network "aio-network". Luồng dữ liệu tổng thể:
 
   [Data Simulator]
        |
-       | (JSON events, daily ~100 records)
+       | (JSON events, daily ~5000 records)
        v
   [Apache Kafka Cluster]  ← topic: churn.raw.events
        |
@@ -479,7 +487,7 @@ Data Pipeline gồm 3 DAG Airflow chạy theo lịch hàng ngày:
   -----------------------------------------------
   Task 1: simulate_to_kafka
     - Module: data-simulator/simulate.py
-    - Sinh ~100 bản ghi khách hàng ngẫu nhiên với phân phối thực tế
+    - Sinh ~5000 bản ghi khách hàng ngẫu nhiên với phân phối thực tế
     - Serialize JSON và publish lên Kafka topic "churn.raw.events"
     - Key: customer_id (đảm bảo ordering trong cùng partition)
     - Cấu hình producer: acks=all, retries=3, retry.backoff.ms=500
@@ -516,12 +524,24 @@ Data Pipeline gồm 3 DAG Airflow chạy theo lịch hàng ngày:
   DAG 3: churn_feature_pipeline (00:30 UTC hàng ngày)
   -------------------------------------------------------
   Task 1: feast_apply
-    - Đăng ký entity (customer_id), data source (parquet), feature views
-      vào Feast registry
+    - Xóa registry.db cũ trước khi apply (rm -f data/registry.db) để tránh
+      EntityNotFoundException khi registry bị corrupt hoặc lỗi thời
+    - Đăng ký entity (customer_id — kiểu STRING), data source (ParquetFileSource
+      trỏ tới processed_churn_data.parquet), feature views vào Feast registry
+    - Không set value_type tường minh cho entity để tránh import lỗi trên
+      một số phiên bản Feast — Feast 0.58.0 tự suy luận type từ data source
+    - Config feature_store.yaml:
+        entity_key_serialization_version: 3   ← bắt buộc với Feast 0.58.0,
+        online_store: redis                      đảm bảo Redis key format nhất
+        connection_string: ${FEAST_REDIS_CONNECTION_STRING}  quán giữa DAG và API
 
   Task 2: feast_materialize_incremental
-    - Đẩy features mới nhất từ parquet vào Redis online store
+    - Chạy: feast materialize-incremental $(date -u +%Y-%m-%dT%H:%M:%S)
+    - Đẩy features mới nhất từ parquet vào Redis online store theo customer_id
     - Output: feature vectors có thể truy xuất real-time theo customer_id
+    - Lưu ý: Airflow worker và API container phải cùng dùng feast==0.58.0 để
+      Redis key serialization format khớp nhau (version mismatch → 404 "No
+      materialized features found")
 
 3.3.2 Training Pipeline
 -----------------------
@@ -604,6 +624,9 @@ Hệ thống sử dụng kiến trúc Lakehouse với Apache Iceberg:
   Redis (Feature Store Online):
     - Port: 6379
     - Lưu: feature vectors theo customer_id cho real-time serving
+    - Key format: Feast 0.58.0 với entity_key_serialization_version=3
+    - Yêu cầu: Airflow worker và API container phải cùng phiên bản Feast để
+      key format nhất quán — khác phiên bản → 404 "No materialized features"
 
   Production Monitoring:
     - File: serving_pipeline/data_model/production/production.csv
@@ -614,11 +637,13 @@ Hệ thống sử dụng kiến trúc Lakehouse với Apache Iceberg:
 -------------------------------------------------------------------------------
 FastAPI Endpoints:
 
-  GET  /                   — Root information
-  GET  /health             — Health check (trả về status, model_loaded, uptime)
-  POST /predict/           — Single prediction
-  POST /predict/batch      — Batch prediction (CSV upload hoặc JSON list)
-  GET  /monitor/drift      — Drift report (format=json hoặc format=html)
+  GET  /                          — Root information
+  GET  /health/                   — Health check (status, model_loaded)
+  POST /predict/                  — Single prediction với full feature payload
+  POST /predict/by-customer-id   — Lookup Feast/Redis theo customer_id → predict
+  POST /predict/batch             — Batch prediction (JSON array, tối đa 1000 records)
+  GET  /monitor/drift             — Evidently drift report (format=json hoặc html)
+  GET  /metrics                   — Prometheus metrics endpoint
 
   POST /predict/ Request Schema:
   {
@@ -636,10 +661,23 @@ FastAPI Endpoints:
 
   POST /predict/ Response Schema:
   {
-    "prediction": 0 | 1,
-    "probability": float,
-    "churn_risk": "Low" | "Medium" | "High"
+    "churn": 0 | 1
   }
+
+  POST /predict/by-customer-id Request Schema:
+  {
+    "customer_id": str
+  }
+  Response: { "churn": 0 | 1 }
+  Lưu ý: Yêu cầu churn_feature_pipeline DAG đã chạy để Feast đã materialize
+          features vào Redis. Trả về 404 nếu customer_id chưa được materialize.
+
+  POST /predict/batch Request Schema (JSON array):
+  [
+    { "Age": ..., "Gender": ..., ... },
+    { "Age": ..., "Gender": ..., ... }
+  ]
+  Response: [{ "churn": 0 | 1 }, ...]
 
   Gradio UI Tabs:
   Tab 1: Single Prediction
@@ -649,7 +687,7 @@ FastAPI Endpoints:
     - Upload CSV → POST /predict/batch → download kết quả
 
   Tab 3: Customer Data Check
-    - Nhập customer_id → truy xuất Feast online features → POST /predict/
+    - Nhập customer_id → POST /predict/by-customer-id (API tự lookup Feast/Redis)
 
 
 ================================================================================
@@ -661,6 +699,8 @@ CHƯƠNG 4. TRIỂN KHAI HỆ THỐNG
 Do đây là môi trường nghiên cứu, dữ liệu được sinh ra từ simulator thay vì
 thu thập từ hệ thống production thực tế. Module data-simulator/simulate.py
 tạo dữ liệu có đặc tính thống kê phản ánh thực tế:
+
+  Mỗi lần chạy DAG data_simulator sinh ~5000 bản ghi/ngày.
 
   Phân phối thuộc tính:
   - age: Uniform [18, 70]
@@ -713,7 +753,13 @@ tắc "single interface, multiple algorithms":
     eval_metric: logloss
 
   LightGBM:
-    Tương tự XGBoost với các tham số tối ưu riêng
+    n_estimators: 1000 (early stopping dừng sớm khi không cải thiện 50 rounds)
+    num_leaves: 31, max_depth: 6 (giới hạn rõ để tránh overfitting)
+    learning_rate: 0.05, subsample: 0.8, colsample_bytree: 0.8
+    reg_alpha: 0.1 (L1), reg_lambda: 1.0 (L2), class_weight: balanced
+    Kỹ thuật: callbacks=[early_stopping(50), log_evaluation(period=-1)]
+    Lưu ý: không dùng max_depth=-1 (vô hạn) và num_leaves=63 vì gây overfitting
+            nghiêm trọng (train F1 ~99%, test accuracy chỉ ~58%)
 
   CatBoost:
     Tự động xử lý categorical features, ordered boosting
@@ -722,8 +768,14 @@ tắc "single interface, multiple algorithms":
   1. Load data từ parquet
   2. Encode categorical → numerical (LabelEncoder)
   3. Train/val split: 80/20, stratified by churn label
-  4. sklearn autolog() kích hoạt tự động log params
-  5. model.fit(X_train, y_train)
+  4. mlflow.sklearn.autolog(log_models=False, log_post_training_metrics=False,
+     log_datasets=False) — tắt cross-validation ngầm của MLflow 3.x để tránh
+     overhead 30+ phút cho tập dữ liệu nhỏ
+  5. model.fit() theo từng loại:
+     - CatBoost:  fit(X_train, y_train, eval_set=(X_test, y_test))
+     - LightGBM:  fit(..., callbacks=[early_stopping(50), log_evaluation(-1)])
+     - XGBoost:   fit(..., eval_set=[(X_test, y_test)], verbose=False)
+     - Các model khác: fit(X_train, y_train)
   6. Tính và log metrics: train_accuracy, test_accuracy, training_f1_score
   7. Log feature importance (top 10)
   8. Wrap với BinaryClassifierWrapper + log MLflow pyfunc artifact
@@ -761,7 +813,7 @@ tắc "single interface, multiple algorithms":
 
 4.4 XÂY DỰNG PIPELINE TỰ ĐỘNG (CI/CD VỚI AIRFLOW)
 -------------------------------------------------------------------------------
-Apache Airflow 3.x với CeleryExecutor được sử dụng để orchestrate toàn bộ
+Apache Airflow 3.1.1 với CeleryExecutor được sử dụng để orchestrate toàn bộ
 pipeline. Cấu trúc DAGs:
 
   DAG: data_simulator
@@ -781,6 +833,9 @@ pipeline. Cấu trúc DAGs:
   Schedule: 00:30 UTC (hàng ngày)
   Tasks: feast_apply → feast_materialize_incremental
   Dependency: Chạy sau lakehouse_etl (parquet đã được export)
+  Chi tiết:
+    feast_apply: rm -f registry.db → feast apply (rebuild registry từ definitions)
+    feast_materialize_incremental: đẩy dữ liệu mới → Redis (entity_key_version=3)
 
   DAG: churn_retraining_pipeline
   --------------------------------
@@ -824,26 +879,34 @@ Serving pipeline được đóng gói trong Docker Compose với 2 services:
   - Fallback: trả về 503 nếu model chưa được load
 
   Cloudflare Tunnel:
-  - Expose API và UI ra internet an toàn qua cloudflare_tunnel/
+  - Expose API và UI ra internet an toàn qua Cloudflare tunnel
   - Không cần mở port trực tiếp, bảo mật hơn port forwarding
+  - Sử dụng cho demo và kiểm tra từ xa trong giai đoạn phát triển
 
 4.6 MONITORING VÀ LOGGING
 -------------------------------------------------------------------------------
 Hệ thống monitoring gồm 2 lớp:
 
-  Lớp 1: Infrastructure Monitoring (Prometheus + Grafana + Loki)
-  ---------------------------------------------------------------
-  - Prometheus scrape metrics từ FastAPI (via prometheus-fastapi-instrumentator)
-  - Metrics thu thập:
-    * Request latency (p50, p95, p99)
-    * Request throughput (req/s)
-    * HTTP status code distribution
-    * Model prediction counts
-    * Active connections
-  - Grafana Dashboard: FastAPI Observability (Dashboard ID: 16110)
-    URL: http://localhost:3000
-  - Loki thu thập application logs từ tất cả containers
-  - Alerting: cấu hình alert rules cho error rate > 5% hoặc latency > 500ms
+  Lớp 1: Infrastructure Monitoring (Prometheus + Grafana + Loki + StatsD)
+  -----------------------------------------------------------------------
+  - Prometheus scrape metrics từ:
+    * FastAPI /metrics (custom prometheus_client counters/histograms)
+    * node_exporter: CPU, RAM, disk, network của host
+    * statsd-exporter (port 9102): nhận Airflow StatsD metrics qua UDP 8125
+  - Metrics thu thập từ FastAPI:
+    * HTTP_REQUESTS: counter theo method/path/status_code
+    * HTTP_LATENCY: histogram latency theo method/path
+    * PREDICTIONS: counter theo endpoint/result (churn/no_churn)
+    * BATCH_SIZE: histogram kích thước batch request
+    * FEAST_LOOKUPS: counter theo status (success/error)
+  - Grafana Dashboards (http://localhost:3000):
+    * Infrastructure Overview: CPU, RAM, disk I/O, network (node_exporter)
+    * Observability Overview: FastAPI request rate, latency, Feast lookup rate
+    * Airflow Overview: DAG run count, scheduler heartbeat
+    * FastAPI Overview: per-endpoint request count và latency
+  - Loki + Promtail: thu thập và aggregate application logs từ containers
+  - StatsD exporter: chuyển đổi Airflow StatsD metrics sang Prometheus format
+    (Airflow 3.x dùng scheduler_heartbeat với dấu gạch dưới, khác Airflow 2.x)
 
   Lớp 2: Data/Model Drift Monitoring (Evidently AI)
   ---------------------------------------------------
@@ -897,8 +960,8 @@ Kết quả triển khai:
   - MLflow UI truy cập tại http://localhost:5000
 
   Data Pipeline:
-  - Data simulator sinh ~100 records/ngày và publish thành công lên Kafka
-  - ETL Bronze → Silver → Gold hoàn thành trong < 2 phút cho 100 records
+  - Data simulator sinh ~5000 records/ngày và publish thành công lên Kafka
+  - ETL Bronze → Silver → Gold hoàn thành trong < 2 phút cho 5000 records
   - Feast apply + materialize thành công, features accessible qua Redis
   - Parquet export hoạt động ổn định
 
@@ -1023,8 +1086,10 @@ phần quan trọng của một hệ thống MLOps hiện đại:
   (2) Feature Store với Feast + Redis cung cấp tính nhất quán features giữa
       training và serving, giải quyết vấn đề training-serving skew.
 
-  (3) Experiment Tracking với MLflow ghi nhận đầy đủ thông tin mỗi thử nghiệm,
-      hỗ trợ so sánh và tái tạo kết quả.
+  (3) Experiment Tracking với MLflow 3.x ghi nhận đầy đủ thông tin mỗi thử
+      nghiệm (parameters, metrics, artifacts, model signature), hỗ trợ so sánh
+      và tái tạo kết quả. Model được serve qua pyfunc interface thống nhất với
+      BinaryClassifierWrapper bao bọc 6 thuật toán khác nhau.
 
   (4) Pipeline tự động với Apache Airflow đảm bảo dữ liệu và mô hình luôn
       được cập nhật theo lịch định sẵn mà không cần can thiệp thủ công.
@@ -1069,6 +1134,12 @@ Hệ thống hiện tại còn có những hạn chế sau:
 
   (7) Chưa có schema registry: Thiếu Kafka schema registry để quản lý schema
       evolution cho messages, có thể gây lỗi khi schema thay đổi.
+
+  (8) Dependency version coupling: Feast, pyiceberg, MLflow, numpy phải được
+      pin đồng thời (numpy 2.x compatibility chain). Khi nâng cấp một thư viện
+      cần kiểm tra lại toàn bộ chain. Version mismatch giữa Airflow worker và
+      API container gây lỗi Redis key format (đã gặp thực tế: feast 0.39.1 vs
+      0.58.0 dẫn đến "No materialized features found" cho mọi customer_id).
 
 6.3 HƯỚNG PHÁT TRIỂN
 -------------------------------------------------------------------------------
@@ -1140,6 +1211,7 @@ TÀI LIỆU THAM KHẢO
 
 [8]  A. Zaharia et al., "Accelerating the Machine Learning Lifecycle with
      MLflow," IEEE Data Eng. Bull., vol. 41, no. 4, pp. 39-45, 2018.
+     MLflow v3.x Documentation: https://mlflow.org/docs/latest/
 
 [9]  Apache Software Foundation, "Apache Kafka Documentation," 2024.
      Available: https://kafka.apache.org/documentation/
@@ -1151,10 +1223,11 @@ TÀI LIỆU THAM KHẢO
 [11] Project Nessie, "Nessie: Git-inspired data lake,"
      Available: https://projectnessie.org/
 
-[12] Feast Development Team, "Feast: Open Source Feature Store,"
+[12] Feast Development Team, "Feast: Open Source Feature Store," v0.58.0, 2025.
      Available: https://feast.dev/
+     Key: entity_key_serialization_version: 3, Redis online store, numpy>=2.0.0
 
-[13] Apache Software Foundation, "Apache Airflow Documentation," v3.x, 2024.
+[13] Apache Software Foundation, "Apache Airflow Documentation," v3.1.1, 2025.
      Available: https://airflow.apache.org/docs/
 
 [14] Evidently AI, "Evidently: Open-source ML monitoring,"
@@ -1190,7 +1263,7 @@ PHỤ LỤC A: CẤU TRÚC MÃ NGUỒN DỰ ÁN
 aio2025-mlops-project01/
 │
 ├── data-simulator/                    # Kafka producer
-│   ├── simulate.py                   # Sinh ~100 records/ngày → Kafka
+│   ├── simulate.py                   # Sinh ~5000 records/ngày → Kafka
 │   ├── Dockerfile                    # Container cho simulator
 │   ├── docker-compose.yml
 │   └── requirements.txt
@@ -1311,17 +1384,18 @@ Bước 3: Kiểm tra
 PHỤ LỤC C: API ENDPOINTS
 -------------------------------------------------------------------------------
 Base URL: http://localhost:8000
+Swagger UI: http://localhost:8000/docs
 
   GET  /
   Mô tả: Root endpoint
   Response: {"message": str, "version": str, "docs": str, "health": str}
 
-  GET  /health
+  GET  /health/
   Mô tả: Health check
   Response: {"status": "healthy"|"unhealthy", "model_loaded": bool}
 
   POST /predict/
-  Mô tả: Single customer churn prediction
+  Mô tả: Single customer churn prediction với full feature payload
   Request Body (JSON):
   {
     "Age": 35,
@@ -1335,12 +1409,18 @@ Base URL: http://localhost:8000
     "Total_Spend": 500.0,
     "Last_Interaction": 10
   }
-  Response: {"prediction": 0|1, "probability": float}
+  Response: {"churn": 0|1}
+
+  POST /predict/by-customer-id
+  Mô tả: Predict churn bằng cách lookup online features từ Feast/Redis
+  Request Body (JSON): {"customer_id": "1776312653"}
+  Response: {"churn": 0|1}
+  Lỗi 404: Nếu customer_id chưa được materialize vào Redis
 
   POST /predict/batch
-  Mô tả: Batch prediction (multiple customers)
-  Request: multipart/form-data (CSV file) hoặc JSON array
-  Response: [{"prediction": 0|1, "probability": float}, ...]
+  Mô tả: Batch prediction (tối đa 1000 customers)
+  Request: JSON array (xem test_batch.csv cho ví dụ 20 records)
+  Response: [{"churn": 0|1}, ...]
 
   GET  /monitor/drift?format=json
   Mô tả: Get drift metrics as JSON
@@ -1355,12 +1435,22 @@ Base URL: http://localhost:8000
   Mô tả: Get full Evidently HTML report
   Response: HTML content
 
+  GET  /metrics
+  Mô tả: Prometheus metrics (scraped by Prometheus server)
+  Response: text/plain Prometheus exposition format
+
   Ví dụ CURL:
+  # Single prediction
   curl -X POST http://localhost:8000/predict/ \
     -H "Content-Type: application/json" \
     -d '{"Age":35,"Gender":"Male","Tenure":24,"Usage_Frequency":15,
          "Support_Calls":2,"Payment_Delay":5,"Subscription_Type":"Premium",
          "Contract_Length":"Annual","Total_Spend":500,"Last_Interaction":10}'
+
+  # Predict by customer ID
+  curl -X POST http://localhost:8000/predict/by-customer-id \
+    -H "Content-Type: application/json" \
+    -d '{"customer_id": "1776312653"}'
 
 
 PHỤ LỤC D: LỊCH CHẠY AIRFLOW DAGS
