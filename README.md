@@ -6,253 +6,272 @@
 [![Kafka](https://img.shields.io/badge/Kafka-KRaft-231F20.svg)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
 
-Hệ thống MLOps end-to-end dự đoán khách hàng rời bỏ (churn), triển khai đầy đủ vòng đời ML từ sinh dữ liệu đến serving và monitoring.
+He thong MLOps end-to-end du doan customer churn, bao gom ingestion, lakehouse, feature store, retraining, serving va monitoring.
 
----
+## Overview
 
-## 📖 Table of Contents
+- Data Simulator: sinh du lieu churn hang ngay, publish len Kafka.
+- Lakehouse: ETL Bronze -> Silver -> Gold voi Iceberg + Nessie + MinIO.
+- Feature Store: Feast apply + materialize Gold parquet vao Redis online store.
+- Model Pipeline: train 6 model song song, chon best F1, register `champion` tren MLflow Registry.
+- Serving Pipeline: FastAPI + Gradio + Evidently monitoring.
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Pipelines](#pipelines)
-- [Infrastructure](#infrastructure)
-- [Monitoring](#monitoring)
-
----
-
-## 🎯 Overview
-
-- **Data Simulator**: Sinh dữ liệu churn hàng ngày → publish lên Kafka → ghi vào Iceberg Bronze table
-- **Lakehouse**: ETL Bronze → Silver → Gold (Nessie + Trino + Superset), export parquet cho training
-- **Feature Store**: Feast apply + materialize features mới nhất vào Redis online store
-- **Model Pipeline**: Train 6 thuật toán song song, chọn best F1, register `champion` lên MLflow Registry
-- **Serving Pipeline**: FastAPI prediction service + Gradio UI + Evidently drift monitoring
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                         Data Flow (Daily)                            │
+│                        Data Preparation Flow                         │
 ├──────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  [data-simulator]                                                    │
+│  [data_simulator]  daily 23:45                                       │
 │    simulate.py ──► Kafka (churn.raw.events)                          │
 │                         │                                            │
-│                         ▼                                            │
-│  [lakehouse_etl]                                                     │
-│    Bronze ──► Silver (dedup/validate) ──► Gold (feature eng.)        │
+│                         ▼  (kafka_to_bronze)                         │
+│                   Iceberg Bronze                                     │
 │                         │                                            │
-│              ┌──────────┴──────────┐                                 │
-│              ▼                     ▼                                 │
-│    [Trino + Superset]    export parquet                               │
-│       dashboard                    │                                 │
-│                                    ▼                                 │
-│  [churn_feature_pipeline]    [churn_retraining] (weekly)             │
-│    feast apply                train 6 models in parallel             │
-│    materialize ──► Redis      find best F1                           │
-│                               register champion ──► MLflow Registry  │
-│                                                          │            │
-│                                                          ▼            │
-│                                              [Serving Pipeline]       │
-│                                               FastAPI + Gradio UI     │
-│                                               Evidently monitoring    │
+│  [lakehouse_etl]  daily 00:00                                        │
+│                         ▼                                            │
+│    Bronze ──► Silver (dedup/validate) ──► Gold (feature eng.)        │
+│                                               │          │           │
+│                                               ▼          ▼           │
+│                                  [Trino + Superset]  export parquet  │
+│                                     dashboard              │         │
+│                                                   ┌────────┘         │
+│                                                   ▼                  │
+│                          ┌────────────────────────┴──────────────┐  │
+│                          ▼                                        ▼  │
+│               [churn_feature_pipeline]            [churn_retraining] │
+│                daily 00:30                         weekly (Sun)      │
+│                 feast apply                        train 6 models    │
+│                 materialize ──► Redis              find best F1      │
+│                                                    register champion │
+│                                                         ▼            │
+│                                                   MLflow Registry    │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Serving Request Flow                          │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Gradio UI                                                           │
+│      │                                                               │
+│      ├─► POST /predict/          (full feature payload)              │
+│      │         │                                                     │
+│      │         ▼                                                     │
+│      │      FastAPI ──► XGBoost champion model ──► {"churn": 0|1}   │
+│      │                   (from MLflow Registry)                      │
+│      │                                                               │
+│      └─► POST /predict/by-customer-id   (only customer_id)          │
+│                │                                                     │
+│                ▼                                                     │
+│             FastAPI                                                  │
+│                │                                                     │
+│                ▼                                                     │
+│          Feast online store ──► Redis (lookup features by id)        │
+│                │                                                     │
+│                ▼                                                     │
+│         XGBoost champion model ──► {"churn": 0|1}                   │
+│          (from MLflow Registry)                                      │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## Canonical Serving Flow
 
-## 📁 Project Structure
+Serving da duoc don lai theo mot luong ro rang:
 
-```
+- UI chi goi API.
+- API la diem duy nhat xu ly prediction.
+- `POST /predict/`: nhan full feature payload.
+- `POST /predict/by-customer-id`: API tu lookup online features tu Feast/Redis theo `customer_id`, sau do predict.
+
+Dieu nay giup:
+
+- khong trung logic lookup giua UI va API
+- de dong bo validation va logging
+- de deploy Docker vi UI khong can truy cap Feast repo hay Redis truc tiep
+
+## Project Structure
+
+```text
 aio2025-mlops-project01/
-├── data-simulator/                  # Kafka producer
-│   ├── simulate.py                 # Sinh records → publish JSON lên Kafka
-│   ├── Dockerfile
-│   └── requirements.txt
-│
-├── data-pipeline/                   # Feast feature store
-│   ├── churn_feature_store/
-│   │   └── churn_features/
-│   │       └── feature_repo/       # entities, data_sources, feature_views
-│   └── requirements.txt
-│
-├── model_pipeline/                  # Model training & evaluation
-│   ├── src/
-│   │   ├── config/                 # YAML per model type (6 models)
-│   │   ├── model/                  # GenericBinaryClassifierTrainer
-│   │   ├── mlflow_utils/           # ExperimentTracker, ModelRegistry
-│   │   └── scripts/                # train.py, eval.py, register_model.py
-│   └── train_all.ps1
-│
-├── serving_pipeline/                # Model serving
-│   ├── api/
-│   │   ├── main.py
-│   │   ├── routers/                # predict, health, monitor
-│   │   └── schemas.py
-│   ├── ui.py                       # Gradio interface
-│   ├── load_model.py
-│   ├── monitoring.py               # Evidently drift
-│   └── docker-compose.yml
-│
-├── infra/
-│   └── docker/
-│       ├── mlflow/                 # MLflow server + MySQL + MinIO
-│       ├── kafka/                  # 3-node Kafka cluster (KRaft)
-│       ├── lakehouse/              # Nessie + Trino + Superset
-│       ├── airflow/                # Airflow 3.x + DAGs
-│       ├── monitor/                # Prometheus + Grafana + Loki
-│       ├── run.ps1                 # PowerShell control script
-│       └── run.sh                  # Bash control script
-│
-├── start.ps1                        # One-click launcher (Windows)
-└── workflow.md                      # Chi tiết luồng chạy
+|-- data-simulator/
+|   |-- simulate.py
+|
+|-- data-pipeline/
+|   |-- churn_feature_store/
+|       |-- churn_features/
+|           |-- feature_repo/
+|
+|-- model_pipeline/
+|   |-- src/
+|       |-- config/
+|       |-- model/
+|       |-- mlflow_utils/
+|       |-- scripts/
+|
+|-- serving_pipeline/
+|   |-- api/
+|   |   |-- main.py
+|   |   |-- routers/
+|   |   |-- schemas.py
+|   |-- ui.py
+|   |-- load_model.py
+|   |-- monitoring.py
+|   |-- Dockerfile
+|   |-- Dockerfile.ui
+|   |-- docker-compose.yml
+|
+|-- infra/
+|   |-- docker/
+|       |-- mlflow/
+|       |-- kafka/
+|       |-- lakehouse/
+|       |-- airflow/
+|       |-- monitor/
+|
+|-- start.ps1
+|-- workflow.md
 ```
 
----
+## Prerequisites
 
-## 🔧 Prerequisites
+- Docker Desktop 20.10+ voi Docker Compose v2
+- Python 3.11
+- RAM khuyen nghi: 16 GB
+- Disk free: 20 GB+
 
-- **OS**: Windows (PowerShell) hoặc Linux/macOS
-- **RAM**: 16GB recommended
-- **Storage**: 20GB+ free
-- **Docker Desktop**: 20.10+ với Docker Compose v2
-- **Python**: 3.11
+Tao Docker network dung chung:
 
-Tạo Docker network dùng chung:
 ```powershell
 docker network create aio-network
 ```
 
----
-
-## 🚀 Quick Start
-
-### Chạy toàn bộ hệ thống (one-click)
+## Quick Start
 
 ```powershell
-# Clone
 git clone https://github.com/ThuanNaN/aio2025-mlops-project01.git
 cd aio2025-mlops-project01
 
-# Tạo network
 docker network create aio-network
 
-# Chạy từ đầu đến cuối (Infra → Data → Model → Serving)
 .\start.ps1
 ```
 
-`start.ps1` tự động:
-1. Start toàn bộ Docker services
-2. Trigger DAG `data_simulator` → `lakehouse_etl` → `churn_feature_pipeline`
-3. Trigger DAG `churn_retraining_pipeline` (train 6 models, register champion)
-4. Start serving API + UI
+`start.ps1` se:
 
-### Các tùy chọn skip:
+1. Start cac Docker stack.
+2. Trigger `data_simulator` -> `lakehouse_etl` -> `churn_feature_pipeline`.
+3. Trigger `churn_retraining_pipeline`.
+4. Start serving API + UI.
 
-```powershell
-# Bỏ qua infra (services đã chạy)
-.\start.ps1 -SkipInfra
+## Main Pipelines
 
-# Chỉ restart serving với model mới
-.\start.ps1 -SkipInfra -SkipData
+### 1. Data Simulator
 
-# Chỉ serving (model đã register sẵn)
-.\start.ps1 -SkipInfra -SkipData -SkipModel
-```
+DAG `data_simulator`:
 
-### Access URLs sau khi start:
+1. `simulate_to_kafka`
+2. `kafka_to_bronze`
 
-| Service | URL | Credentials |
-|---|---|---|
-| Serving API | http://localhost:8000/docs | — |
-| Gradio UI | http://localhost:7860 | — |
-| MLflow | http://localhost:5000 | — |
-| Airflow | http://localhost:8080 | airflow / airflow |
-| MinIO | http://localhost:9001 | minio / minio123 |
-| Superset | http://localhost:8088 | admin / admin |
-| Trino | http://localhost:8090 | — |
-| Nessie | http://localhost:19120 | — |
-| Grafana | http://localhost:3000 | admin / admin |
-| Prometheus | http://localhost:9090 | — |
+Output: `bronze.customer_events`
 
----
+### 2. Lakehouse ETL
 
-## 🔄 Pipelines
+DAG `lakehouse_etl`:
 
-### Data Simulator → Kafka → Lakehouse
+1. `init_namespaces`
+2. `bronze_to_silver`
+3. `silver_to_gold`
+4. `export_gold_parquet`
 
-**Location**: [`data-simulator/`](data-simulator/), [`infra/docker/airflow/dags/`](infra/docker/airflow/dags/)
+Outputs:
 
-DAG `data_simulator` (23:45 UTC hàng ngày):
-1. `simulate_to_kafka` — sinh ~100 records, publish JSON lên Kafka topic `churn.raw.events`
-2. `kafka_to_bronze` — consume từ Kafka, append vào Iceberg `bronze.customer_events`
+- `silver.customers`
+- `gold.churn_features`
+- `data-pipeline/churn_feature_store/churn_features/feature_repo/data/processed_churn_data.parquet`
 
-DAG `lakehouse_etl` (00:00 UTC hàng ngày):
-1. `bronze_to_silver` — dedup, validate
-2. `silver_to_gold` — feature engineering (`tenure_age_ratio`, `spend_per_usage`, ...)
-3. `export_gold_parquet` — export ra parquet cho Feast + training
+### 3. Feature Store
 
-DAG `churn_feature_pipeline` (00:30 UTC hàng ngày):
-1. `feast_apply` — đăng ký features
-2. `feast_materialize_incremental` — đẩy vào Redis online store
+DAG `churn_feature_pipeline`:
 
----
+1. `feast_apply`
+2. `feast_materialize_incremental`
 
-### Model Pipeline
+Output: Redis online features theo `customer_id`
 
-**Location**: [`model_pipeline/`](model_pipeline/)
+### 4. Retraining
 
-**Supported Models**: `xgboost`, `lightgbm`, `catboost`, `random_forest`, `decision_tree`, `logistic_regression`
+DAG `churn_retraining_pipeline`:
 
-DAG `churn_retraining_pipeline` (Chủ nhật 00:00 UTC):
-1. Train 6 models **song song** từ parquet Gold
-2. `find_best_model` — chọn run có `training_f1_score` cao nhất trong MLflow
-3. `evaluate_best_model` — validate threshold
-4. `register_champion` — register vào MLflow Registry, set alias `champion`
+1. train 6 model song song
+2. `find_best_model`
+3. `evaluate_best_model`
+4. `register_champion`
 
-Train thủ công (ngoài Airflow):
-```powershell
-cd model_pipeline
-$env:PYTHONPATH = (Get-Location).Path
-.\train_all.ps1
-```
+Output: model alias `models:/customer_churn_model@champion`
 
----
+## Serving Pipeline
 
-### Serving Pipeline
-
-**Location**: [`serving_pipeline/`](serving_pipeline/)
+Chay rieng serving:
 
 ```powershell
 cd serving_pipeline
-# Sửa .env: set MODEL_URI=models:/customer_churn_model@champion
-docker compose up -d
+docker compose up -d --build
 ```
 
-**Predict example**:
+Luu y:
+
+- `api` build tu `Dockerfile`
+- `ui` build tu `Dockerfile.ui`
+- UI local source se khop voi runtime container
+
+### Predict with full payload
+
 ```bash
 curl -X POST http://localhost:8000/predict/ \
   -H "Content-Type: application/json" \
   -d '{
-    "Age": 35, "Gender": "Male", "Tenure": 24,
-    "Usage_Frequency": 15, "Support_Calls": 2,
-    "Payment_Delay": 5, "Subscription_Type": "Premium",
-    "Contract_Length": "Annual", "Total_Spend": 500,
+    "Age": 35,
+    "Gender": "Male",
+    "Tenure": 24,
+    "Usage_Frequency": 15,
+    "Support_Calls": 2,
+    "Payment_Delay": 5,
+    "Subscription_Type": "Premium",
+    "Contract_Length": "Annual",
+    "Total_Spend": 500,
     "Last_Interaction": 10
   }'
 ```
 
----
+### Predict by customer_id
 
-## 🏗️ Infrastructure
+```bash
+curl -X POST http://localhost:8000/predict/by-customer-id \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "123"
+  }'
+```
 
-**Location**: [`infra/docker/`](infra/docker/)
+## Service URLs
+
+| Service | URL |
+|---|---|
+| Serving API docs | http://localhost:8000/docs |
+| Gradio UI | http://localhost:7860 |
+| MLflow | http://localhost:5000 |
+| Airflow | http://localhost:8080 |
+| MinIO Console | http://localhost:9001 |
+| Superset | http://localhost:8088 |
+| Trino | http://localhost:8090 |
+| Nessie | http://localhost:19120 |
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+
+## Infrastructure
 
 | Stack | Services | Ports |
 |---|---|---|
@@ -262,39 +281,20 @@ curl -X POST http://localhost:8000/predict/ \
 | `monitor/` | Prometheus + Grafana + Loki | 9090, 3000 |
 | `airflow/` | Airflow 3.x (Celery) | 8080 |
 
-**PowerShell**:
-```powershell
-cd infra/docker
-.\run.ps1 start all          # start toàn bộ
-.\run.ps1 start mlflow       # start service riêng lẻ
-.\run.ps1 stop all
-.\run.ps1 status
+Startup order:
+
+```text
+mlflow -> lakehouse -> kafka -> monitor -> airflow -> serving
 ```
 
-**Bash**:
-```bash
-cd infra/docker
-./run.sh up
-./run.sh down
-./run.sh status
-```
+## Monitoring
 
----
+- Grafana: infra metrics
+- Evidently: drift report qua API `/monitor/drift`
+- Superset: dashboard truc tiep tren Iceberg tables qua Trino
 
-## 📊 Monitoring
+## Notes
 
-### Grafana (http://localhost:3000)
-- Pre-provisioned folder `MLOps Monitoring` với 3 dashboard:
-- `MLOps Infrastructure Overview`: CPU, RAM, disk, network, service health
-- `MLOps GPU Overview`: GPU utilization, temperature, frame buffer memory
-- `MLOps Observability Overview`: Prometheus scrape health, scrape duration, target status
-- Datasources `Prometheus` và `Loki` được tạo tự động khi start stack monitor
-- Hiện chưa có dashboard request latency / prediction counts cho FastAPI vì service chưa expose endpoint `/metrics` để Prometheus scrape
-
-### Evidently Drift
-```bash
-GET http://localhost:8000/monitor/drift?format=json
-```
-
-### Superset (http://localhost:8088)
-- Dashboard trực tiếp từ Iceberg tables (Bronze / Silver / Gold) qua Trino
+- Feast lookup cho `customer_id` nam o API, khong nam o UI.
+- UI va API da tach dung vai tro: UI la client, API la backend xu ly nghiep vu.
+- `workflow.md` mo ta chi tiet luong chay thuc te.

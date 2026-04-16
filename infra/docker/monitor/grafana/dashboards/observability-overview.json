@@ -156,7 +156,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "up{job=~\"prometheus|loki|node_exporter|dcgm_exporter\"}",
+          "expr": "up{job=~\"prometheus|loki|node_exporter|churn_api|airflow\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "{{job}}",
@@ -204,7 +204,7 @@
       },
       "targets": [
         {
-          "expr": "{container_name=~\"aivn-.*|churn-prediction-.*|node_exporter|dcgm-exporter\"}",
+          "expr": "{container_name=~\"aivn-.*|churn-prediction-.*|airflow-.*|node_exporter\"}",
           "queryType": "range",
           "refId": "A"
         }

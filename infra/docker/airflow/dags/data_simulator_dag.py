@@ -5,7 +5,7 @@ Schedule: hàng ngày 23:45 UTC
 Flow:
   simulate_to_kafka → kafka_to_bronze
 
-  simulate_to_kafka : sinh ~100 records, publish JSON vào Kafka topic churn.raw.events
+  simulate_to_kafka : sinh ~5000 records, publish JSON vào Kafka topic churn.raw.events
   kafka_to_bronze   : consume từ Kafka → parse → append vào Iceberg Bronze table
 
 Sau đó lakehouse_etl_dag (00:00) đọc Bronze → Silver → Gold → parquet
@@ -178,7 +178,7 @@ with DAG(
     dag_id="data_simulator",
     default_args=default_args,
     description=(
-        "Sinh ~100 bản ghi khách hàng churn mới mỗi ngày, "
+        "Sinh ~5000 bản ghi khách hàng churn mới mỗi ngày, "
         "publish vào Kafka topic churn.raw.events, "
         "sau đó consume và ghi vào Iceberg Bronze table"
     ),
@@ -192,7 +192,7 @@ with DAG(
         task_id="simulate_to_kafka",
         bash_command=(
             f"python {DATA_SIMULATOR}/simulate.py "
-            "--n-records 100 "
+            "--n-records 5000 "
             f"--kafka-brokers '{KAFKA_BROKERS}' "
             f"--kafka-topic {KAFKA_TOPIC}"
         ),

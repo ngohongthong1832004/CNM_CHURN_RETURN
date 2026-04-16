@@ -124,30 +124,19 @@ function Ensure-MlflowEnvFile {
 }
 
 function Ensure-MinioBuckets {
-    $requiredBuckets = @("mlflow")
-    $deadline = (Get-Date).AddSeconds(60)
-
-    # Wait until MinIO container is running
+    # Buckets (mlflow, lakehouse) are created automatically by the 'mc' and 'mc-lakehouse'
+    # init containers defined in each compose file. We just wait for them to complete.
+    $deadline = (Get-Date).AddSeconds(90)
+    Write-Info "  Waiting for MinIO mc init container to finish..."
     while ((Get-Date) -lt $deadline) {
-        $state = (& docker inspect --format "{{.State.Status}}" aio_minio 2>$null)
-        if ($state -eq "running") { break }
-        Start-Sleep -Seconds 2
-    }
-
-    foreach ($bucket in $requiredBuckets) {
-        $deadline2 = (Get-Date).AddSeconds(30)
-        $created = $false
-        while ((Get-Date) -lt $deadline2) {
-            & docker exec aio_minio mc mb --ignore-existing "minio/$bucket" 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { $created = $true; break }
-            Start-Sleep -Seconds 3
+        $state = (& docker inspect --format "{{.State.Status}}" aio_minio_mc 2>$null)
+        if ($state -eq "exited") {
+            $exit = (& docker inspect --format "{{.State.ExitCode}}" aio_minio_mc 2>$null)
+            if ($exit -eq "0") { Write-Success "  MinIO bucket 'mlflow' is ready."; return }
         }
-        if ($created) {
-            Write-Success "  MinIO bucket '$bucket' is ready."
-        } else {
-            Write-Warn "  WARNING: Could not ensure bucket '$bucket' -- check MinIO manually."
-        }
+        Start-Sleep -Seconds 3
     }
+    Write-Warn "  WARNING: mc init container did not exit cleanly -- check MinIO manually."
 }
 
 function Ensure-AirflowDirectories {
@@ -193,9 +182,6 @@ function Show-ServicePorts([string]$name) {
 
 function Get-StartArguments([string]$name, [string]$composeFile) {
     $composeArgs = @("-f", $composeFile, "up", "-d")
-    if ($name -eq "monitor" -and $script:IsWindowsHost) {
-        $composeArgs += @("loki", "prometheus", "grafana")
-    }
     return $composeArgs
 }
 

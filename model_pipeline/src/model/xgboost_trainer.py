@@ -153,13 +153,36 @@ class GenericBinaryClassifierTrainer:
         if self.feature_names is None:
             raise ValueError("Please prepare the data before training")
 
-        mlflow.sklearn.autolog(log_models=False) #type:ignore
-    
+        # Disable post-training metrics and dataset logging to avoid
+        # MLflow 3.x running expensive cross-validation internally
+        mlflow.sklearn.autolog(  #type:ignore
+            log_models=False,
+            log_post_training_metrics=False,
+            log_datasets=False,
+        )
+
         model_class = self.SUPPORTED_MODELS[self.model_type]
-  
-        
         self.model = model_class(**params)
-        self.model.fit(X_train, y_train)
+
+        if self.model_type == 'catboost':
+            # Pass eval_set so od_type/od_wait/use_best_model work correctly
+            self.model.fit(X_train, y_train, eval_set=(X_test, y_test))
+        elif self.model_type == 'lightgbm':
+            # Early stopping prevents overfitting; callbacks API avoids deprecation warning
+            from lightgbm import early_stopping, log_evaluation
+            self.model.fit(
+                X_train, y_train,
+                eval_set=[(X_test, y_test)],
+                callbacks=[early_stopping(50, verbose=False), log_evaluation(period=-1)],
+            )
+        elif self.model_type == 'xgboost':
+            self.model.fit(
+                X_train, y_train,
+                eval_set=[(X_test, y_test)],
+                verbose=False,
+            )
+        else:
+            self.model.fit(X_train, y_train)
         
 
         train_score = self.model.score(X_train, y_train)

@@ -7,15 +7,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MODEL_URI=${MODEL_URI}
-      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
-      - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - MODEL_URI=${MODEL_URI:-models:/customer_churn_model@champion}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-http://mlflow_server:5000}
+      - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL:-http://minio:9000}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-minio}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-minio123}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - FEAST_REDIS_CONNECTION_STRING=${FEAST_REDIS_CONNECTION_STRING:-redis:6379}
+      - FEAST_REPO_PATH=/app/churn_feature_store/churn_features/feature_repo
     volumes:
       - ./api/data:/app/api/data
       - ./api/reports:/app/api/reports
+      - ../data-pipeline/churn_feature_store/churn_features/feature_repo:/app/churn_feature_store/churn_features/feature_repo
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')"]
@@ -27,7 +30,9 @@ services:
       - aio-network
 
   ui:
-    image: ghcr.io/thuannan/aio2025-mlops-project01-ui:main
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
     container_name: churn-prediction-ui
     restart: unless-stopped
     ports:

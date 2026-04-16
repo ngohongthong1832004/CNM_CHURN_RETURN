@@ -18,9 +18,9 @@ model:
   random_state: 42
 
   parameters:
-    n_estimators: 300
-    num_leaves: 63          # 2^max_depth - 1 (max_depth=6)
-    max_depth: -1           # -1 = không giới hạn, kiểm soát qua num_leaves
+    n_estimators: 1000      # early stopping sẽ dừng trước khi đến 1000
+    num_leaves: 31          # giảm từ 63 xuống để tránh overfit
+    max_depth: 6            # giới hạn rõ ràng thay vì -1 (vô hạn)
     learning_rate: 0.05
     subsample: 0.8
     colsample_bytree: 0.8

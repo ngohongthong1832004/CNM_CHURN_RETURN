@@ -38,6 +38,11 @@ class ChurnPrediction(BaseModel):
     churn: int = Field(..., description="Predicted churn (0=Active, 1=Churn)")
 
 
+class CustomerIdInput(BaseModel):
+    """Input schema for Feast-backed churn prediction"""
+    customer_id: str = Field(..., description="Customer identifier used to fetch online features from Feast")
+
+
 class HealthResponse(BaseModel):
     """Health check response"""
     status: str

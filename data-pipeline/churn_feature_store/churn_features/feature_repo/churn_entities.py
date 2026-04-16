@@ -1,12 +1,13 @@
 from feast import Entity
-from feast.value_type import ValueType
 
-# Define the customer entity
+# customer_id is stored as STRING in the Gold parquet (silver_to_gold does .astype(str))
+# Do NOT add value_type — newer Feast versions infer the type from the data source,
+# and importing feast.value_type.ValueType can silently fail on some installs,
+# causing feast apply to produce an empty registry.
 customer = Entity(
     name="customer",
     description="A customer entity with unique ID",
     join_keys=["customer_id"],
-    value_type=ValueType.INT64,
     tags={
         "owner": "data_team",
         "domain": "customer_analytics",

@@ -41,7 +41,14 @@ with DAG(
 
     feast_apply = BashOperator(
         task_id="feast_apply",
-        bash_command=f"cd {FEATURE_REPO} && feast apply",
+        # Delete stale registry.db first — a corrupt/outdated registry causes
+        # EntityNotFoundException during materialize even when feast apply succeeds.
+        # The registry is regenerated cleanly from the Python feature definitions.
+        bash_command=(
+            f"cd {FEATURE_REPO} && "
+            "rm -f data/registry.db && "
+            "feast apply"
+        ),
     )
 
     feast_materialize = BashOperator(

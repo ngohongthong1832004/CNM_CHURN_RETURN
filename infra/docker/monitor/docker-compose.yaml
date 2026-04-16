@@ -50,6 +50,35 @@ services:
     networks:
       - aio-network
 
+  statsd-exporter:
+    image: prom/statsd-exporter:latest
+    container_name: aivn-statsd-exporter
+    restart: unless-stopped
+    ports:
+      - "9102:9102"   # Prometheus scrape
+      - "8125:8125/udp"  # StatsD UDP input from Airflow
+    volumes:
+      - ./statsd/statsd_mapping.yml:/etc/statsd/statsd_mapping.yml:ro
+    command:
+      - "--statsd.mapping-config=/etc/statsd/statsd_mapping.yml"
+      - "--statsd.listen-udp=:8125"
+      - "--web.listen-address=:9102"
+    networks:
+      - aio-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: aivn-promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - aio-network
+
   node_exporter:
     image: quay.io/prometheus/node-exporter:latest
     container_name: node_exporter
@@ -64,23 +93,6 @@ services:
     networks:
       - aio-network
 
-
-  dcgm-exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:4.4.0-4.5.0-ubuntu22.04
-    container_name: dcgm-exporter
-    restart: unless-stopped
-    ports:
-      - "9400:9400"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
-    cap_add:
-      - SYS_ADMIN
-    runtime: nvidia
-    networks:
-      - aio-network
 
 
 networks:

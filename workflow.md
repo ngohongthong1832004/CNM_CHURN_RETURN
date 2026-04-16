@@ -1,189 +1,206 @@
-# End-to-End Workflow (Data to Prediction Result)
+# End-to-End Workflow
 
-Tài liệu này mô tả luồng chạy thực tế của toàn bộ hệ thống, từ sinh dữ liệu đến kết quả dự đoán.
+Tai lieu nay mo ta luong chay thuc te cua he thong, tu ingest du lieu den prediction va monitoring.
 
----
+## 1. Data Simulation -> Kafka -> Bronze
 
-## 1) Data Simulation → Kafka → Iceberg Bronze
+DAG: `data_simulator`  
+Schedule: `23:45 UTC` moi ngay
 
-DAG: `data_simulator` — Schedule: **23:45 UTC hàng ngày**
+Thanh phan:
 
-Main components:
-- `data-simulator/simulate.py` — Kafka producer
-- `infra/docker/airflow/dags/data_simulator_dag.py` — 2 tasks: `simulate_to_kafka` → `kafka_to_bronze`
-- Kafka topic: `churn.raw.events` (brokers: `broker-1:9094`, `broker-2:9094`, `broker-3:9094`)
-- Iceberg Bronze table: `bronze.customer_events` (Nessie REST Catalog / MinIO)
+- `data-simulator/simulate.py`
+- `infra/docker/airflow/dags/data_simulator_dag.py`
+- Kafka topic `churn.raw.events`
+- Iceberg table `bronze.customer_events`
 
-Flow:
-1. `simulate_to_kafka`: `simulate.py` sinh ~100 records khách hàng mới với phân phối thực tế (age, tenure, spend, churn label...).
-2. Mỗi record được serialize thành JSON và publish lên Kafka topic `churn.raw.events` (key = `customer_id`).
-3. `kafka_to_bronze`: Airflow consumer group `airflow-bronze-consumer` poll Kafka, parse JSON, type-cast, và append vào Iceberg Bronze table qua Nessie REST catalog.
+Luong:
 
-Output:
-- Iceberg table `bronze.customer_events` trên MinIO (`s3://lakehouse/`)
-
----
-
-## 2) Lakehouse ETL — Bronze → Silver → Gold → Parquet
-
-DAG: `lakehouse_etl` — Schedule: **00:00 UTC hàng ngày**
-
-Main components:
-- `infra/docker/airflow/dags/lakehouse_etl_dag.py` — 4 tasks: `init_namespaces` → `bronze_to_silver` → `silver_to_gold` → `export_gold_parquet`
-- PyIceberg catalog (Nessie), MinIO storage
-
-Flow:
-1. `init_namespaces`: tạo Iceberg namespaces `bronze`, `silver`, `gold` nếu chưa có.
-2. `bronze_to_silver`: đọc toàn bộ Bronze → dedup theo `customer_id` (giữ bản `created_at` mới nhất) → validate (age, tenure, total_spend) → ghi đè Silver table.
-3. `silver_to_gold`: tính derived features (`tenure_age_ratio`, `spend_per_usage`, `support_calls_per_tenure`, `spending_group`, `tenure_group`) → ghi đè Gold table với schema Feast-compatible.
-4. `export_gold_parquet`: export Gold table → file parquet tại `feature_repo/data/processed_churn_data.parquet`.
+1. `simulate_to_kafka` sinh khoang 100 records moi.
+2. Records duoc publish len Kafka topic `churn.raw.events`.
+3. `kafka_to_bronze` consume Kafka, parse JSON, type-cast, append vao Iceberg Bronze qua Nessie catalog.
 
 Output:
-- Iceberg tables: `silver.customers`, `gold.churn_features` trên MinIO
-- Parquet file: `data-pipeline/churn_feature_store/churn_features/feature_repo/data/processed_churn_data.parquet`
 
-Trino + Superset query trực tiếp các Iceberg tables (Bronze/Silver/Gold) để dashboard.
+- `bronze.customer_events` tren MinIO `s3://lakehouse/`
 
----
+## 2. Bronze -> Silver -> Gold -> Parquet
 
-## 3) Feature Store — Feast Apply + Materialize
+DAG: `lakehouse_etl`  
+Schedule: `00:00 UTC` moi ngay
 
-DAG: `churn_feature_pipeline` — Schedule: **00:30 UTC hàng ngày**
+Thanh phan:
 
-Main components:
+- `infra/docker/airflow/dags/lakehouse_etl_dag.py`
+- Nessie REST catalog
+- MinIO warehouse
+
+Luong:
+
+1. `init_namespaces`: tao `bronze`, `silver`, `gold` neu chua ton tai.
+2. `bronze_to_silver`: doc Bronze, dedup theo `customer_id`, validate, overwrite `silver.customers`.
+3. `silver_to_gold`: tao feature-ready dataset, overwrite `gold.churn_features`.
+4. `export_gold_parquet`: export Gold table ra:
+   `data-pipeline/churn_feature_store/churn_features/feature_repo/data/processed_churn_data.parquet`
+
+Outputs:
+
+- `silver.customers`
+- `gold.churn_features`
+- `processed_churn_data.parquet`
+
+## 3. Feast Apply + Materialize
+
+DAG: `churn_feature_pipeline`  
+Schedule: `00:30 UTC` moi ngay
+
+Thanh phan:
+
 - `data-pipeline/churn_feature_store/churn_features/feature_repo/churn_entities.py`
-- `data-pipeline/churn_feature_store/churn_features/feature_repo/data_sources.py`
-- `data-pipeline/churn_feature_store/churn_features/feature_repo/feature_views.py`
+- `data_sources.py`
+- `feature_views.py`
 
-Flow:
-1. `feast_apply`: đăng ký entity, data source, feature views vào Feast registry (đọc từ parquet do Lakehouse ETL export).
-2. `feast_materialize_incremental`: đẩy features mới nhất từ parquet vào Redis online store.
+Luong:
+
+1. `feast_apply`: dang ky entity, source, feature views vao Feast registry.
+2. `feast_materialize_incremental`: materialize feature moi nhat vao Redis online store.
 
 Output:
-- Redis online store: feature vectors có thể truy xuất real-time theo `customer_id`.
 
----
+- Redis online features, truy xuat theo `customer_id`
 
-## 4) Model Training — churn_retraining_pipeline
+## 4. Weekly Retraining
 
-DAG: `churn_retraining_pipeline` — Schedule: **00:00 UTC Chủ nhật (weekly)**
+DAG: `churn_retraining_pipeline`  
+Schedule: `00:00 UTC` Chu nhat
 
-Main components:
+Thanh phan:
+
 - `model_pipeline/src/scripts/train.py`
-- `model_pipeline/src/model/xgboost_trainer.py` — `GenericBinaryClassifierTrainer` + `BinaryClassifierWrapper`
-- `model_pipeline/src/config/*.yaml` — config riêng cho từng model type
-- `model_pipeline/src/mlflow_utils/experiment_tracker.py`
-
-Flow:
-1. Train 6 models **song song** từ parquet (`processed_churn_data.parquet`):
-   - `logistic_regression`, `decision_tree`, `random_forest`, `xgboost`, `lightgbm`, `catboost`
-2. Mỗi model: LabelEncoder cho categorical columns → `prepare_data()` split train/val → `train()` → log metrics + feature importance vào MLflow.
-3. `save_model()`: log MLflow pyfunc artifact với `BinaryClassifierWrapper` (hỗ trợ `return_probs`, `return_both`).
-
-Output:
-- MLflow run per model: `run_id`, metrics (`training_f1_score`, `train_accuracy`, `test_accuracy`), artifact path.
-
----
-
-## 5) Model Evaluation & Registry
-
-Tiếp nối trong DAG `churn_retraining_pipeline`:
-
-Main components:
 - `model_pipeline/src/scripts/eval.py`
 - `model_pipeline/src/scripts/register_model.py`
-- `model_pipeline/src/mlflow_utils/model_registry.py`
 
-Flow:
-1. `find_best_model`: query MLflow tìm run có `training_f1_score` cao nhất trong các experiments vừa train.
-2. `evaluate_best_model`: chạy `eval.py` với run_id của model tốt nhất — validate threshold, optional export predictions CSV.
-3. `register_champion`: `mlflow.register_model()` → set alias `champion` → model sẵn sàng cho serving.
+Luong:
+
+1. Train 6 models song song tu `processed_churn_data.parquet`.
+2. `find_best_model`: tim run co `training_f1_score` cao nhat.
+3. `evaluate_best_model`: danh gia lai run tot nhat.
+4. `register_champion`: register vao MLflow va set alias `champion`.
 
 Output:
-- Model version trong MLflow Registry với alias `champion`.
-- Serving dùng URI: `models:/customer_churn_model@champion`
 
----
+- MLflow model alias `models:/customer_churn_model@champion`
 
-## 6) Serving API
+## 5. Serving Architecture
 
-Main components:
+Thanh phan:
+
 - `serving_pipeline/api/main.py`
 - `serving_pipeline/api/routers/predict.py`
-- `serving_pipeline/pre_processing.py`
+- `serving_pipeline/ui.py`
 - `serving_pipeline/load_model.py`
-- `serving_pipeline/api/routers/monitor.py`
 - `serving_pipeline/monitoring.py`
 
-Prediction flow:
-1. `POST /predict/` (single) hoặc `/predict/batch`
-2. Input validated bởi `pre_processing.validate_input()`.
-3. `get_model()` lazy-load MLflow pyfunc model một lần duy nhất (MODEL_URI + MLFLOW_TRACKING_URI).
-4. Model predict churn (0/1), trả về prediction + probability.
-5. Input + prediction async append vào `production.csv` cho drift monitoring.
+Nguyen tac:
 
-Monitoring flow:
-1. `GET /monitor/drift` → load reference data + production data.
-2. `monitoring.generate_drift_report()` chạy Evidently metrics.
-3. Trả về JSON metrics hoặc HTML report.
+- UI chi goi API
+- API la diem duy nhat xu ly prediction
+- Feast lookup cho `customer_id` nam trong API, khong nam trong UI
 
----
+### 5.1 Predict with full payload
 
-## 7) UI — Gradio
+Endpoint:
 
-Main component:
+- `POST /predict/`
+
+Luong:
+
+1. Request gui day du feature payload.
+2. API validate input.
+3. API lazy-load model tu MLflow neu can.
+4. Model predict churn.
+5. Input + prediction duoc append vao production dataset phuc vu drift monitoring.
+
+### 5.2 Predict by customer_id
+
+Endpoint:
+
+- `POST /predict/by-customer-id`
+
+Luong:
+
+1. UI hoac client gui `customer_id` len API.
+2. API goi Feast online store de lay online features tu Redis.
+3. API map feature ve schema model input.
+4. API predict churn bang model dang load tu MLflow.
+5. Production log duoc ghi lai cho monitoring.
+
+Loi ich:
+
+- khong lap logic lookup o UI
+- de deploy Docker vi UI khong can truy cap Redis/Feast repo
+- de dong bo validation, logging, va future auth
+
+## 6. Gradio UI
+
+Thanh phan:
+
 - `serving_pipeline/ui.py`
+- `serving_pipeline/Dockerfile.ui`
 
-Tabs:
-1. **Single Prediction**: nhập fields → POST `/predict/`.
-2. **Batch Prediction**: upload CSV → POST `/predict/batch`.
-3. **Customer Data Check**: lookup Feast online features theo `customer_id` → POST `/predict/`.
+Tabs hien tai:
 
-Network (docker compose):
-- UI internal port: `7823` → host port: `7860`
-- UI → API: `http://api:8000` (internal `aio-network`)
+1. `Single Prediction`
+   - predict tu form input
+   - predict tu `customer_id`
+2. `Batch Prediction`
 
----
+Luu y:
 
-## 8) Infrastructure
+- UI `customer_id` goi API `/predict/by-customer-id`
+- UI khong truy cap Feast truc tiep nua
+- `serving_pipeline/docker-compose.yml` build UI tu source local de runtime khop voi code
 
-Docker stacks (tất cả dùng `aio-network`):
+## 7. Monitoring
 
-| Stack | Services | Ports |
-|---|---|---|
-| `infra/docker/mlflow` | MLflow server + MySQL + MinIO | MLflow:5000, MinIO:9000/9001 |
-| `infra/docker/kafka` | 3-node Kafka (KRaft) | broker-1:9092, broker-2:9192, broker-3:9292 |
-| `infra/docker/lakehouse` | Nessie + Trino + Superset | Nessie:19120, Trino:8090, Superset:8088 |
-| `infra/docker/monitor` | Prometheus + Grafana + Loki | Grafana:3000, Prometheus:9090 |
-| `infra/docker/airflow` | Airflow 3.x (CeleryExecutor) + PostgreSQL + Redis | Airflow:8080 |
+### Evidently
 
-Startup order: `mlflow` → `lakehouse` → `kafka` → `monitor` → `airflow`
+- `GET /monitor/drift`
+- So sanh reference data voi `production.csv`
 
-Airflow DAG schedule order hàng ngày:
+### Superset
+
+- Query truc tiep Iceberg Bronze/Silver/Gold qua Trino
+
+### Grafana
+
+- Theo doi infrastructure metrics
+
+## 8. Runtime Dependency Summary
+
+```text
+Serving API needs:
+- MLflow
+- MinIO
+- Feast repo
+- Redis online store
+
+Gradio UI needs:
+- FastAPI only
+
+Airflow needs:
+- Kafka
+- Nessie
+- MinIO
+- MLflow
+- Redis
 ```
-23:45  data_simulator          (simulate → Kafka → Bronze)
-00:00  lakehouse_etl           (Bronze → Silver → Gold → parquet)
-00:30  churn_feature_pipeline  (feast apply + materialize → Redis)
-Sun    churn_retraining_pipeline (train → best → champion)
+
+## 9. Schedule Summary
+
+```text
+23:45  data_simulator
+00:00  lakehouse_etl
+00:30  churn_feature_pipeline
+Sun    churn_retraining_pipeline
 ```
-
-Runtime dependencies cho serving:
-- API cần: MLflow server + MinIO (load model artifact)
-- UI cần: API
-- Customer lookup (Feast) cần: Feast registry + Redis online store
-
----
-
-## 9) Kết quả cuối cùng
-
-| Output | URL / Path |
-|---|---|
-| Serving API docs | http://localhost:8000/docs |
-| Gradio UI | http://localhost:7860 |
-| MLflow experiments/models | http://localhost:5000 |
-| Airflow DAG monitor | http://localhost:8080 |
-| Superset dashboard | http://localhost:8088 |
-| Grafana dashboard | http://localhost:3000 |
-| Prediction logs (drift) | `serving_pipeline/api/data/production/production.csv` |
-| Model artifacts | MinIO `s3://mlflow/` via MLflow |
-| Lakehouse data | MinIO `s3://lakehouse/` (Iceberg tables) |

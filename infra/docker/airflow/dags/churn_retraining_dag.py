@@ -5,8 +5,11 @@ Schedule : weekly, Sunday midnight (0 0 * * 0)
 
 Flow:
   train_logistic_regression ─┐
-  train_decision_tree        ├─► find_best_model ─► evaluate_best_model ─► register_champion
-  train_random_forest        ─┘
+  train_decision_tree        │
+  train_random_forest        ├─► find_best_model ─► evaluate_best_model ─► register_champion
+  train_xgboost              │
+  train_lightgbm             │
+  train_catboost             ─┘
 
 Requires volumes in docker-compose:
   - ../../../model_pipeline:/opt/model_pipeline
@@ -70,7 +73,7 @@ MODELS = {
 
 def find_best_model(**context):
     """
-    Query MLflow for the best run (highest training_f1_score) among the 3 training
+    Query MLflow for the best run (highest training_f1_score) among the 6 training
     experiments created in the last 3 hours.  Push run_id + model_type to XCom.
     """
     import mlflow  # imported here so Airflow scheduler can parse DAG without mlflow installed
@@ -221,7 +224,7 @@ with DAG(
     tags=["training", "mlflow", "retraining"],
 ) as dag:
 
-    # ── Train all 3 models in parallel ────────────────────────────────────────
+    # ── Train all 6 models in parallel ────────────────────────────────────────
     train_tasks = {
         model_type: BashOperator(
             task_id=f"train_{model_type}",

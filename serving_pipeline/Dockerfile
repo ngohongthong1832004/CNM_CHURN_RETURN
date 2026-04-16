@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY load_model.py .
 COPY pre_processing.py .
 COPY monitoring.py .
+COPY sample_retrieval.py .
 
 # Copy the API application
 COPY api/ ./api/

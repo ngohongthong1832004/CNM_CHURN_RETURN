@@ -3,7 +3,6 @@ Drift monitoring endpoints - FIXED VERSION
 """
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
 from typing import Optional
 import logging
 import os
@@ -12,7 +11,7 @@ from datetime import datetime
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from monitoring import generate_drift_report, load_reference_data, load_current_data
-from api.schemas import DriftMetricsResponse
+from schemas import DriftMetricsResponse
 router = APIRouter(prefix="/monitor", tags=["Monitoring"])
 logger = logging.getLogger(__name__)
 
@@ -35,19 +34,22 @@ async def check_drift(
     
     Note: Classification performance metrics require ground truth labels in production data.
     """
+    _default_ref  = os.getenv("REFERENCE_DATA_PATH", "/app/api/data/reference_data.csv")
+    _default_curr = os.getenv("CURRENT_DATA_PATH",   "/app/api/data/production.csv")
+
     try:
         # Set default paths
-        ref_path = reference_path or "/home/mlops/Repository/aio2025-mlops-project01/serving_pipeline/original_data/reference_data.csv"
-        curr_path = current_path or "/home/mlops/Repository/aio2025-mlops-project01/serving_pipeline/original_data/current_data.csv"
-        
+        ref_path  = reference_path  or _default_ref
+        curr_path = current_path    or _default_curr
+
         logger.info(f"Loading reference data from: {ref_path}")
         logger.info(f"Loading current data from: {curr_path} (last {days} days)")
-        
+
         # Load data
         try:
             reference_df = load_reference_data(ref_path)
             current_df = load_current_data(curr_path, days=days)
-            print(reference_df.head())
+            logger.info(f"Reference data head:\n{reference_df.head()}")
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:

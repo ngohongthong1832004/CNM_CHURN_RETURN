@@ -18,18 +18,20 @@ model:
   random_state: 42
 
   parameters:
-    iterations: 300
+    iterations: 500
     depth: 6
     learning_rate: 0.05
-    l2_leaf_reg: 3.0        # L2 regularization
-    border_count: 128       # số bins cho numeric features
+    l2_leaf_reg: 3.0
+    border_count: 128
     bagging_temperature: 1.0
     random_strength: 1.0
-    class_weights: [1, 2]   # [weight_class_0, weight_class_1] — tăng weight churn=1
     eval_metric: "F1"
+    od_type: "Iter"         # early stopping: dừng khi không cải thiện trên eval_set
+    od_wait: 50             # dừng sau 50 iter không có cải thiện
+    use_best_model: True    # dùng iteration tốt nhất trên eval_set thay vì iteration cuối
     random_seed: 42
     thread_count: -1
-    verbose: 0              # tắt log output
+    verbose: 100            # log mỗi 100 iter
 
 evaluation:
   thresholds:

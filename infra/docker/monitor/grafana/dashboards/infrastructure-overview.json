@@ -95,7 +95,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "up{job=~\"prometheus|loki|node_exporter|dcgm_exporter\"}",
+          "expr": "up{job=~\"prometheus|loki|node_exporter|churn_api|airflow\"}",
           "legendFormat": "{{job}}",
           "range": true,
           "refId": "A"

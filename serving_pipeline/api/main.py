@@ -1,11 +1,14 @@
 """
 FastAPI main application
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from routers import predict, health, monitor
 import logging
+import time
+from prometheus_client import make_asgi_app
+from metrics import HTTP_REQUESTS, HTTP_LATENCY
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -15,6 +18,22 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+async def prometheus_middleware(request: Request, call_next):
+    """Track HTTP request count and latency for every endpoint."""
+    start = time.perf_counter()
+    response: Response = await call_next(request)
+    duration = time.perf_counter() - start
+
+    path = request.url.path
+    HTTP_REQUESTS.labels(
+        method=request.method,
+        path=path,
+        status_code=response.status_code,
+    ).inc()
+    HTTP_LATENCY.labels(method=request.method, path=path).observe(duration)
+    return response
 
 
 @asynccontextmanager
@@ -47,6 +66,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Prometheus middleware (runs after CORS)
+app.middleware("http")(prometheus_middleware)
+
+# Expose /metrics endpoint (scraped by Prometheus)
+app.mount("/metrics", make_asgi_app())
 
 # Include routers
 app.include_router(predict.router)

@@ -4,7 +4,6 @@ import pandas as pd
 import os
 import logging
 from typing import Tuple
-from sample_retrieval import get_customer_features
 
 # Setup logging
 logging.basicConfig(
@@ -13,7 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8003")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 def predict_single(age, gender, tenure, usage_freq, support_calls, 
@@ -136,131 +135,51 @@ def predict_batch(file) -> Tuple[pd.DataFrame, str]:
         return None, f"**Error:** {str(e)}"
 
 
-def map_feature_store_to_api_format(df: pd.DataFrame) -> dict:
-    """
-    Map feature store data format to API ChurnInput format
-    
-    Args:
-        df: DataFrame from feature store
-        
-    Returns:
-        Dictionary in ChurnInput format
-    """
-    if len(df) == 0:
-        return None
-    
-    row = df.iloc[0]
-    
-    # Map feature store columns to API format
-    # Default values if columns don't exist
-    payload = {
-        "Age": int(row.get('age', row.get('Age', 30))),
-        "Gender": str(row.get('gender', row.get('Gender', 'Male'))).capitalize(),
-        "Tenure": int(row.get('tenure_months', row.get('Tenure', 12))),
-        "Usage_Frequency": int(row.get('usage_frequency', row.get('Usage_Frequency', row.get('avg_monthly_usage', 15)))),
-        "Support_Calls": int(row.get('support_calls', row.get('Support_Calls', row.get('support_tickets_90d', 0)))),
-        "Payment_Delay": int(row.get('payment_delay', row.get('Payment_Delay', row.get('late_payments_12m', 0)))),
-        "Subscription_Type": str(row.get('subscription_type', row.get('Subscription_Type', row.get('plan_type', 'Standard')))).capitalize(),
-        "Contract_Length": str(row.get('contract_length', row.get('Contract_Length', row.get('contract_type', 'Monthly')))).capitalize(),
-        "Total_Spend": float(row.get('total_spend', row.get('Total_Spend', 500.0))),
-        "Last_Interaction": int(row.get('last_interaction', row.get('Last_Interaction', row.get('num_logins_last_30d', 15))))
-    }
-    
-    return payload
-
-
 def search_customer_data(customer_id: str) -> str:
     """
-    Search customer data from feature store, check for NaN, and predict churn
-    
-    Args:
-        customer_id: Customer ID to search
-        
-    Returns:
-        Status message with prediction result
+    Look up customer features via the API's /predict/by-customer-id endpoint
+    (Feast lookup + prediction happen server-side).
     """
     if not customer_id or customer_id.strip() == "":
-        logger.warning("Customer ID is empty")
         return "**Error:** Please enter Customer ID"
-    
+
+    customer_id = customer_id.strip()
+    logger.info(f"Requesting prediction for customer_id: {customer_id}")
+
     try:
-        customer_id = customer_id.strip()
-        logger.info(f"Searching data for customer_id: {customer_id}")
-        
-        # Get data from feature store
-        logger.info("Calling get_customer_features from sample_retrieval.py...")
-        df = get_customer_features(customer_id)
-        
-        logger.info(f"Retrieved data from feature store. Shape: {df.shape}")
-        logger.info(f"Data:\n{df.to_string()}")
-        
-        # Check for NaN values
-        nan_counts = df.isna().sum()
-        total_nan = nan_counts.sum()
-        
-        logger.info("=" * 50)
-        logger.info(f"DATA CHECK FOR CUSTOMER ID: {customer_id}")
-        logger.info("=" * 50)
-        logger.info(f"Number of features: {len(df.columns)}")
-        logger.info(f"Total NaN values: {total_nan}")
-        
-        if total_nan > 0:
-            logger.warning("NaN VALUES DETECTED!")
-            logger.info("Details of columns with NaN:")
-            for col, count in nan_counts.items():
-                if count > 0:
-                    logger.warning(f"  - {col}: {count} NaN values")
-            
-            nan_cols = [col for col, count in nan_counts.items() if count > 0]
-            return f"""
-**Invalid Data**
-            """.strip()
-        
-        # No NaN - proceed with prediction
-        logger.info("No NaN values - Data is valid!")
-        
-        # Map feature store data to API format
-        payload = map_feature_store_to_api_format(df)
-        
-        if payload is None:
-            return "**Error:** No data found for this customer ID"
-        
-        logger.info(f"Mapped payload: {payload}")
-        
-        # Call prediction API
-        try:
-            response = requests.post(f"{API_BASE_URL}/predict/", json=payload, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-            
-            churn = result.get('churn', 0)
-            prediction_text = "CHURN" if churn == 1 else "ACTIVE"
-            
-            logger.info(f"Prediction result for customer {customer_id}: {prediction_text}")
-            
-            return f"""
-**Data Valid - Prediction Complete**
+        response = requests.post(
+            f"{API_BASE_URL}/predict/by-customer-id",
+            json={"customer_id": customer_id},
+            timeout=10,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        churn = result.get("churn", 0)
+        prediction_text = "CHURN" if churn == 1 else "ACTIVE"
+        logger.info(f"Prediction for customer {customer_id}: {prediction_text}")
+
+        return f"""
+**Prediction Complete**
 
 **Customer ID:** {customer_id}
 **Prediction:** {prediction_text}
+        """.strip()
 
-**Details have been logged.**
-            """.strip()
-            
-        except requests.exceptions.RequestException as e:
-            error_detail = str(e)
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    error_detail = e.response.json()
-                except:
-                    error_detail = e.response.text
-            logger.error(f"API Error: {error_detail}")
-            return f"**API Error:** {error_detail}"
-            
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        try:
+            detail = e.response.json().get("detail", e.response.text)
+        except Exception:
+            detail = str(e)
+        if status == 404:
+            return f"**Not Found:** No features found for customer ID `{customer_id}`"
+        return f"**API Error {status}:** {detail}"
+    except requests.exceptions.RequestException as e:
+        return f"**Connection Error:** {str(e)}"
     except Exception as e:
-        error_msg = f"Error searching data: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return f"**Error:** {error_msg}"
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        return f"**Error:** {str(e)}"
 
 
 # Build UI

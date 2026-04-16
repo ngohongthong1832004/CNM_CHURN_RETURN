@@ -181,6 +181,11 @@ if (-not $SkipInfra) {
 
     if (-not (Test-Path $INFRA_SCRIPT)) { throw "Khong tim thay: $INFRA_SCRIPT" }
 
+    # Rebuild Airflow image truoc khi start de dam bao requirements.txt moi nhat duoc ap dung
+    # (feast version, pyiceberg, etc.)
+    Write-Info "Rebuild Airflow image (dam bao requirements.txt cap nhat)..."
+    & $INFRA_SCRIPT build airflow
+
     Write-Info "Goi run.ps1 start all..."
     & $INFRA_SCRIPT start all
 
@@ -281,6 +286,7 @@ if (-not $SkipServing) {
         "AWS_ACCESS_KEY_ID=minio",
         "AWS_SECRET_ACCESS_KEY=minio123",
         "AWS_DEFAULT_REGION=us-east-1",
+        "FEAST_REDIS_CONNECTION_STRING=redis:6379",
         "API_BASE_URL=http://api:8000"
     )
     $envLines | Set-Content -Path $envFile -Encoding ASCII

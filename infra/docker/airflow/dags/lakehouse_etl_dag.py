@@ -3,7 +3,7 @@ DAG: lakehouse_etl
 Schedule: hàng ngày 00:00 UTC
 
 Flow:
-  init_namespaces → bronze_to_silver → silver_to_gold → export_gold_parquet
+  init_namespaces → bronze_to_silver → silver_to_gold → export_gold_parquet → trigger_churn_feature_pipeline
 
 Layers:
   Bronze  iceberg.bronze.customer_events  — raw từ simulator
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 NESSIE_URI  = os.environ.get("NESSIE_URI", "http://nessie:19120/iceberg")
@@ -311,4 +312,10 @@ with DAG(
         python_callable=export_gold_parquet,
     )
 
-    t_init >> t_silver >> t_gold >> t_export
+    t_trigger_feast = TriggerDagRunOperator(
+        task_id="trigger_churn_feature_pipeline",
+        trigger_dag_id="churn_feature_pipeline",
+        wait_for_completion=False,  # không block, để chạy song song tiếp theo
+    )
+
+    t_init >> t_silver >> t_gold >> t_export >> t_trigger_feast

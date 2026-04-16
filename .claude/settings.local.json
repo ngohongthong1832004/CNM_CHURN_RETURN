@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X POST http://localhost:8000/predict/by-customer-id -H 'Content-Type: application/json' -d '{\"customer_id\": \"1776317432\"}')",
+      "Bash(curl -s http://localhost:9090/api/v1/targets)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s \"http://localhost:9090/api/v1/query?query=node_cpu_seconds_total\")",
+      "Bash(curl -s \"http://localhost:9090/api/v1/query?query=airflow_dag_processing_total_parse_time\")",
+      "Bash(curl -s http://localhost:9102/metrics)",
+      "Bash(curl -s \"http://localhost:9090/api/v1/query?query=up%7Bjob%3D~%22prometheus%7Cloki%7Cnode_exporter%7Cchurn_api%7Cairflow%22%7D\")"
+    ]
+  }
+}

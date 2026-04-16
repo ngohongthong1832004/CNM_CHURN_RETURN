@@ -96,6 +96,18 @@ $bindDirs = @(
     "$ROOT\serving_pipeline\api\reports"
 )
 
+# Feast registry.db: xoa de tranh EntityNotFoundException khi feast apply chay lai
+$feastFiles = @(
+    "$ROOT\data-pipeline\churn_feature_store\churn_features\feature_repo\data\registry.db"
+)
+foreach ($f in $feastFiles) {
+    if (Test-Path $f) {
+        Write-Info "Xoa Feast registry: $f"
+        Remove-Item -Force $f
+        Write-Ok "Da xoa: $f"
+    }
+}
+
 foreach ($d in $bindDirs) {
     if (Test-Path $d) {
         Write-Info "Xoa: $d"
@@ -112,6 +124,7 @@ foreach ($d in $bindDirs) {
 if ($RemoveImages) {
     Write-Step "Buoc 3/4 -- Xoa Docker images da build"
 
+    # Named images
     $images = @(
         "mlflow_server",
         "aio_superset"
@@ -127,6 +140,17 @@ if ($RemoveImages) {
             Write-Info "Image khong ton tai (bo qua): $img"
         }
     }
+
+    # Airflow custom images (built tu infra/docker/airflow/Dockerfile)
+    # Pattern: airflow-airflow-*:latest
+    Write-Info "Xoa Airflow custom images..."
+    docker images --format "{{.Repository}}:{{.Tag}}" 2>$null |
+        Where-Object { $_ -match "^airflow-airflow-" } |
+        ForEach-Object {
+            Write-Info "  Xoa: $_"
+            docker rmi -f $_ 2>&1 | ForEach-Object { "    $_" }
+        }
+    Write-Ok "Airflow images da duoc don dep"
 
     # Xoa dangling images (<none>) sinh ra tu qua trinh build
     Write-Info "Xoa dangling images..."

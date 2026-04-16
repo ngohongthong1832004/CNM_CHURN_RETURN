@@ -19,7 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the UI application
 COPY ui.py .
-COPY sample_retrieval.py .
 
 # Expose the port for Gradio
 EXPOSE 7860
