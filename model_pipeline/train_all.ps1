@@ -31,7 +31,10 @@ $env:PYTHONPATH = $projectRoot
 $models = @(
     @{ Prefix = "logreg"; Name = "logistic_regression"; Config = (Join-Path $configDir "logistic_regression.yaml") },
     @{ Prefix = "dtree"; Name = "decision_tree"; Config = (Join-Path $configDir "decision_tree.yaml") },
-    @{ Prefix = "rf"; Name = "random_forest"; Config = (Join-Path $configDir "random_forest.yaml") }
+    @{ Prefix = "rf"; Name = "random_forest"; Config = (Join-Path $configDir "random_forest.yaml") },
+    @{ Prefix = "xgb"; Name = "xgboost"; Config = (Join-Path $configDir "xgboost.yaml") },
+    @{ Prefix = "lgbm"; Name = "lightgbm"; Config = (Join-Path $configDir "lightgbm.yaml") },
+    @{ Prefix = "cat"; Name = "catboost"; Config = (Join-Path $configDir "catboost.yaml") }
 )
 
 Write-Host "Project root: $projectRoot"

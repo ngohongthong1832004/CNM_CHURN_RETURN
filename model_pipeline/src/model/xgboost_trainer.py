@@ -6,7 +6,14 @@ import mlflow
 from mlflow.models import infer_signature
 import numpy as np
 import pandas as pd
-from sklearn.metrics import f1_score
+import matplotlib.pyplot as plt
+from sklearn.metrics import (
+    f1_score,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    roc_curve,
+    auc,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
@@ -201,7 +208,8 @@ class GenericBinaryClassifierTrainer:
         
 
         self._log_feature_importance()
-        
+        self._log_plots(X_test, y_test)
+
         return self.model
     
     def _log_feature_importance(self):
@@ -226,6 +234,34 @@ class GenericBinaryClassifierTrainer:
                 self.tracker.log_metric(f"feature_importance/{feature}", score)  #type:ignore
             logger.info("Feature importance logged")
     
+    def _log_plots(self, X_test: pd.DataFrame, y_test: pd.Series):
+        """Generate and log confusion matrix + ROC curve to MLflow"""
+        y_pred = self.model.predict(X_test)
+        y_prob = self.model.predict_proba(X_test)[:, 1]
+
+        # Confusion matrix
+        cm_fig, ax = plt.subplots(figsize=(6, 5))
+        ConfusionMatrixDisplay(confusion_matrix(y_test, y_pred)).plot(ax=ax, colorbar=False)
+        ax.set_title(f"Confusion Matrix — {self.model_type}")
+        mlflow.log_figure(cm_fig, "plots/confusion_matrix.png")
+        plt.close(cm_fig)
+        logger.info("Confusion matrix logged")
+
+        # ROC curve
+        fpr, tpr, _ = roc_curve(y_test, y_prob)
+        roc_auc = auc(fpr, tpr)
+        roc_fig, ax = plt.subplots(figsize=(6, 5))
+        ax.plot(fpr, tpr, label=f"AUC = {roc_auc:.4f}")
+        ax.plot([0, 1], [0, 1], "k--")
+        ax.set_xlabel("False Positive Rate")
+        ax.set_ylabel("True Positive Rate")
+        ax.set_title(f"ROC Curve — {self.model_type}")
+        ax.legend()
+        mlflow.log_figure(roc_fig, "plots/roc_curve.png")
+        plt.close(roc_fig)
+        self.tracker.log_metric("roc_auc", roc_auc)
+        logger.info(f"ROC curve logged (AUC={roc_auc:.4f})")
+
     def save_model(
         self,
         model_name: str,

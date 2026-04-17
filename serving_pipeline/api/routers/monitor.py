@@ -60,9 +60,9 @@ async def check_drift(
         
         # Define feature columns for drift monitoring
         feature_columns = [
-            'Age', 'Gender', 'Tenure', 'Usage_Frequency', 'Support_Calls',
-            'Payment_Delay', 'Subscription_Type', 'Contract_Length',
-            'Total_Spend', 'Last_Interaction'
+            'age', 'gender', 'tenure_months', 'usage_frequency', 'support_calls',
+            'payment_delay_days', 'subscription_type', 'contract_length',
+            'total_spend', 'last_interaction_days'
         ]
         
         # Filter to only existing columns
@@ -85,17 +85,17 @@ async def check_drift(
         
         # Check if we can do classification metrics
         #  need BOTH target AND prediction in BOTH datasets
-        has_ref_target = 'Churn' in reference_df.columns
+        has_ref_target = 'churned' in reference_df.columns
         has_ref_prediction = 'prediction' in reference_df.columns
-        has_curr_target = 'Churn' in current_df.columns  
+        has_curr_target = 'churned' in current_df.columns
         has_curr_prediction = 'prediction' in current_df.columns
-        
+
         if has_ref_target and has_ref_prediction and has_curr_target and has_curr_prediction:
             # Both datasets have ground truth and predictions
             logger.info("Classification metrics available: Both datasets have target and prediction")
-            ref_data['target'] = reference_df['Churn']
+            ref_data['target'] = reference_df['churned']
             ref_data['prediction'] = reference_df['prediction']
-            curr_data['target'] = current_df['Churn']
+            curr_data['target'] = current_df['churned']
             curr_data['prediction'] = current_df['prediction']
             include_classification = True
             
