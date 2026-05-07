@@ -104,4 +104,21 @@ Expected output:
 - Feature values retrieved from Redis
 - One row per `customer_id`
 
+## 7. Superset-ready features
+
+The Gold layer exported to `processed_churn_data.parquet` already includes a small set of dashboard-friendly derived features:
+
+- `tenure_age_ratio`
+- `spend_per_usage`
+- `support_calls_per_tenure`
+- `spending_group`
+- `tenure_group`
+
+You can query `gold.churn_features` from Superset through the auto-provisioned Trino datasource (`Lakehouse (Trino)`) and build charts such as:
+
+- churn rate by `spending_group`
+- average `total_spend` by `tenure_group`
+- `support_calls_per_tenure` by `subscription_type`
+- `spend_per_usage` split by churned vs non-churned customers
+
 ---

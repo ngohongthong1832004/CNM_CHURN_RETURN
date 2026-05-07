@@ -19,6 +19,12 @@ FEATURES = [
     "customer_behavior:payment_delay_days",
     "customer_behavior:total_spend",
     "customer_behavior:last_interaction_days",
+    # ---------- customer_dashboard_features ----------
+    "customer_dashboard_features:tenure_age_ratio",
+    "customer_dashboard_features:spend_per_usage",
+    "customer_dashboard_features:support_calls_per_tenure",
+    "customer_dashboard_features:spending_group",
+    "customer_dashboard_features:tenure_group",
 ]
 
 
@@ -95,6 +101,12 @@ if __name__ == "__main__":
 #     "customer_behavior:payment_delay_days",
 #     "customer_behavior:total_spend",
 #     "customer_behavior:last_interaction_days",
+#     # ---------- customer_dashboard_features ----------
+#     "customer_dashboard_features:tenure_age_ratio",
+#     "customer_dashboard_features:spend_per_usage",
+#     "customer_dashboard_features:support_calls_per_tenure",
+#     "customer_dashboard_features:spending_group",
+#     "customer_dashboard_features:tenure_group",
 # ]
 
 # df = store.get_online_features(

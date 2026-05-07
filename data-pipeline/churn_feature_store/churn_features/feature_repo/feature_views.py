@@ -36,6 +36,22 @@ customer_behavior = FeatureView(
     online=True
 )
 
+# Dashboard-ready derived features for Superset and ad-hoc analysis
+customer_dashboard_features = FeatureView(
+    name="customer_dashboard_features",
+    entities=[customer],
+    ttl=None,
+    schema=[
+        Field(name="tenure_age_ratio", dtype=Float32),
+        Field(name="spend_per_usage", dtype=Float32),
+        Field(name="support_calls_per_tenure", dtype=Float32),
+        Field(name="spending_group", dtype=String),
+        Field(name="tenure_group", dtype=String),
+    ],
+    source=customer_stats_source,
+    online=True
+)
+
 # Churn target feature view
 churn_target = FeatureView(
     name="churn_target",
