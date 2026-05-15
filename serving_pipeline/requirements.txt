@@ -187,7 +187,7 @@ typer-slim==0.21.0
 typing_extensions==4.15.0
 typing-inspect==0.9.0
 typing-inspection==0.4.2
-tzdata==2025.3
+tzdata==2026.2
 ujson==5.11.0
 urllib3==2.6.2
 uuid6==2025.0.1
