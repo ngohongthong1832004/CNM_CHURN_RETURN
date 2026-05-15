@@ -81,7 +81,7 @@ jupyter_core==5.9.1
 kagglehub==0.3.13
 kiwisolver==1.4.9
 librt==0.7.7
-litestar==2.19.0
+litestar==2.21.1
 litestar-htmx==0.5.0
 llvmlite==0.46.0
 locket==1.0.0
