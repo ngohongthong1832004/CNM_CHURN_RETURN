@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: fs
           scan-ref: .
@@ -84,7 +84,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: churn-${{ matrix.image.name }}:scan
           format: sarif
