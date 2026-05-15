@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -38,9 +38,18 @@ jobs:
       - name: Upload SARIF (filesystem)
         if: always()
         uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
+
+      - name: Upload filesystem scan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-sarif
+          path: trivy-fs.sarif
+          retention-days: 14
 
   image-scan:
     name: Image scan - ${{ matrix.image.name }}
@@ -75,7 +84,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: churn-${{ matrix.image.name }}:scan
           format: sarif
@@ -87,6 +96,15 @@ jobs:
       - name: Upload SARIF (image)
         if: always()
         uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
         with:
           sarif_file: trivy-${{ matrix.image.name }}.sarif
           category: trivy-image-${{ matrix.image.name }}
+
+      - name: Upload image scan artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-${{ matrix.image.name }}-sarif
+          path: trivy-${{ matrix.image.name }}.sarif
+          retention-days: 14

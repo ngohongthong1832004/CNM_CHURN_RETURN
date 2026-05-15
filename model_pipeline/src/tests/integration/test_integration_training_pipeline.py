@@ -80,5 +80,3 @@ class TestCompleteTrainingPipeline:
                     predictions = trainer.predict(sample_training_data.head(2))
                     assert len(predictions) == 2
         
-    @patch('src.mlflow_utils.experiment_tracker.mlflow')
-    

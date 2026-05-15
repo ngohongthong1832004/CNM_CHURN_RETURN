@@ -41,10 +41,12 @@ def shared_state():
 
 @pytest.fixture(scope='module')
 def mlflow_config():
-    # load up mlflow config
+    return {
+        "tracking_uri": "http://localhost:5000",
+        "experiment_name": "e2e_test_experiment",
+    }
 
-    ...
-
+@pytest.mark.skip(reason="e2e cycle tests are incomplete — tests 01 and 03-10 not yet implemented")
 class TestFullMlopsCycle:
     
 
@@ -88,8 +90,8 @@ class TestFullMlopsCycle:
             model = trainer.train(
                 dtrain=dtrain,
                 dtest=dtest,
-                num_boost_round=,
-                early_stopping_rounds=
+                num_boost_round=10,
+                early_stopping_rounds=5
             )
 
             print(f"Model trained: best_iteration={model.best_iteration}, best_score={model.best_score:.4f}")
@@ -100,7 +102,7 @@ class TestFullMlopsCycle:
             print(f"Model saved with run_id: {run.info.run_id=}")
             pytest.baseline_run_id = run.info.run_id
         
-        runs = tracker
+        runs = tracker.search_runs()
 
 
 
