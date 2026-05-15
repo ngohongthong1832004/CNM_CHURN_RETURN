@@ -1,0 +1,117 @@
+name: Model Pipeline Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "model_pipeline/**"
+      - ".github/workflows/model-tests.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "model_pipeline/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1"
+
+concurrency:
+  group: model-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: model_pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock pytest-timeout
+          pip install mlflow==3.8.1 scikit-learn==1.8.0 xgboost==3.1.2 \
+                      pandas==2.3.3 numpy==2.3.5 pyyaml==6.0.3 \
+                      lightgbm catboost loguru pydantic boto3
+
+      - name: Wait for MinIO
+        run: |
+          for i in {1..30}; do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
+      - name: Start MLflow tracking server
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          MLFLOW_S3_ENDPOINT_URL: http://localhost:9000
+        run: |
+          pip install boto3
+          # Create bucket
+          python - <<'PY'
+          import boto3
+          s3 = boto3.client('s3', endpoint_url='http://localhost:9000',
+                            aws_access_key_id='minioadmin',
+                            aws_secret_access_key='minioadmin')
+          try:
+              s3.create_bucket(Bucket='mlflow')
+              print("bucket created")
+          except Exception as e:
+              print(f"bucket exists or error: {e}")
+          PY
+          mlflow server \
+            --host 0.0.0.0 \
+            --port 5000 \
+            --backend-store-uri sqlite:///mlflow.db \
+            --default-artifact-root s3://mlflow/ \
+            > mlflow.log 2>&1 &
+          for i in {1..30}; do
+            curl -sf http://localhost:5000/health && break
+            sleep 2
+          done
+
+      - name: Run integration tests
+        working-directory: model_pipeline
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          MLFLOW_S3_ENDPOINT_URL: http://localhost:9000
+          MLFLOW_TRACKING_URI: http://localhost:5000
+          PYTHONPATH: ${{ github.workspace }}/model_pipeline
+        run: |
+          pytest src/tests/integration \
+            --junitxml=junit-integration.xml \
+            --timeout=300 \
+            -v
+        continue-on-error: false
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            model_pipeline/junit-integration.xml
+            mlflow.log
+          retention-days: 14

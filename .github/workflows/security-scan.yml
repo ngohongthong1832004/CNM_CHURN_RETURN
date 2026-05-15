@@ -1,0 +1,92 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fs-scan:
+    name: Filesystem & deps scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          skip-dirs: .venv,node_modules,.git
+
+      - name: Upload SARIF (filesystem)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  image-scan:
+    name: Image scan - ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: serving-api
+            context: serving_pipeline
+            dockerfile: serving_pipeline/Dockerfile
+          - name: serving-ui
+            context: serving_pipeline
+            dockerfile: serving_pipeline/Dockerfile.ui
+          - name: data-simulator
+            context: data-simulator
+            dockerfile: data-simulator/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build local image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          load: true
+          tags: churn-${{ matrix.image.name }}:scan
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: churn-${{ matrix.image.name }}:scan
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload SARIF (image)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: trivy-image-${{ matrix.image.name }}

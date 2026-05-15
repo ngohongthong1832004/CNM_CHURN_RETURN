@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [ci, dependencies]
+
+  - package-ecosystem: pip
+    directory: /serving_pipeline
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [python, dependencies]
+
+  - package-ecosystem: pip
+    directory: /data-pipeline
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [python, dependencies]
+
+  - package-ecosystem: pip
+    directory: /data-simulator
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels: [python, dependencies]
+
+  - package-ecosystem: docker
+    directory: /serving_pipeline
+    schedule:
+      interval: weekly
+    labels: [docker, dependencies]
+
+  - package-ecosystem: docker
+    directory: /data-simulator
+    schedule:
+      interval: weekly
+    labels: [docker, dependencies]

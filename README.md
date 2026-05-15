@@ -6,8 +6,13 @@
 [![Feast](https://img.shields.io/badge/Feast-0.58-red.svg)](https://feast.dev/)
 [![Kafka](https://img.shields.io/badge/Kafka-KRaft-231F20.svg)](https://kafka.apache.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
+[![CI](https://github.com/ngohongthong1832004/CNM_CHURN_RETURN/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+[![Docker Build](https://github.com/ngohongthong1832004/CNM_CHURN_RETURN/actions/workflows/docker-build.yml/badge.svg)](.github/workflows/docker-build.yml)
+[![Security](https://github.com/ngohongthong1832004/CNM_CHURN_RETURN/actions/workflows/security-scan.yml/badge.svg)](.github/workflows/security-scan.yml)
 
 He thong MLOps end-to-end du doan customer churn, bao gom toan bo vong doi: sinh du lieu, lakehouse, feature store, huan luyen lai mo hinh va serving.
+
+> **CI/CD**: Pipeline tự động (lint, unit/integration tests, build Docker, security scan với Trivy) chạy trên GitHub Actions. Xem chi tiết tại [.github/workflows/README.md](.github/workflows/README.md).
 
 ---
 
