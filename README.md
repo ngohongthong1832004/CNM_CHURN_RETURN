@@ -122,6 +122,32 @@ He thong MLOps end-to-end du doan customer churn, bao gom toan bo vong doi: sinh
  │   ├─ Airflow Overview         (DAG run count, scheduler heartbeat)         │
  │   └─ FastAPI Overview         (per-endpoint metrics)                       │
  └─────────────────────────────────────────────────────────────────────────────┘
+
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                          CI/CD  (GitHub Actions)                            │
+ │                                                                             │
+ │   Push / PR to main or develop                                              │
+ │         │                                                                   │
+ │         ├──► ci.yml          Lint (ruff + black) + Unit tests               │
+ │         │                    trigger: moi push / PR                         │
+ │         │                                                                   │
+ │         ├──► model-tests.yml  Integration tests (MLflow + MinIO that)       │
+ │         │                    trigger: khi model_pipeline/ thay doi          │
+ │         │                    schedule: Thu Hai 02:00 UTC hang tuan          │
+ │         │                                                                   │
+ │         ├──► docker-build.yml  Build & push 3 images len ghcr.io            │
+ │         │    ├─ churn-serving-api    (serving_pipeline/Dockerfile)          │
+ │         │    ├─ churn-serving-ui     (serving_pipeline/Dockerfile.ui)       │
+ │         │    └─ churn-data-simulator (data-simulator/Dockerfile)            │
+ │         │    trigger: push len main hoac tag v*.*.*                         │
+ │         │    tag: latest | branch | sha-<short> | semver                    │
+ │         │                                                                   │
+ │         └──► security-scan.yml  Trivy scan CRITICAL+HIGH CVEs               │
+ │              ├─ fs-scan   : quet toan bo source + dependencies              │
+ │              └─ image-scan: quet 3 Docker images                            │
+ │              trigger: moi push / PR + hang ngay 04:00 UTC                  │
+ │              output: SARIF upload len GitHub Security tab                   │
+ └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -474,6 +500,135 @@ Ket noi truc tiep den Trino de query Iceberg tables:
 - `bronze.customer_events` — du lieu raw tu Kafka
 - `silver.customers` — du lieu da clean
 - `gold.churn_features` — features cho model
+
+---
+
+## CI/CD Pipeline
+
+He thong su dung **GitHub Actions** voi 4 workflows chay tu dong:
+
+### Tong quan
+
+```
+Push / PR to main
+        │
+        ├──► ci.yml              Lint + Unit Tests          (moi push/PR)
+        ├──► model-tests.yml     Integration Tests          (khi model_pipeline thay doi)
+        ├──► docker-build.yml    Build & Push Docker images (khi push len main)
+        └──► security-scan.yml   Trivy Security Scan        (moi push/PR + hang ngay)
+```
+
+---
+
+### Workflow 1: CI — Lint & Unit Tests ([ci.yml](.github/workflows/ci.yml))
+
+**Trigger:** Push hoac PR vao `main`, `develop`
+
+```
+lint (ruff + black)
+        │
+unit-tests (Python 3.11)
+```
+
+| Job | Noi dung |
+|---|---|
+| `lint` | `ruff check` toan bo 4 module + `black --check` kiem tra format |
+| `unit-tests` | `pytest src/tests/unit` voi coverage report (upload artifact) |
+
+- Concurrency: cancel run cu khi co run moi tren cung branch (`ci-${{ github.ref }}`)
+- Coverage XML va JUnit XML duoc luu 14 ngay qua `upload-artifact`
+
+---
+
+### Workflow 2: Model Pipeline Integration Tests ([model-tests.yml](.github/workflows/model-tests.yml))
+
+**Trigger:** Push/PR vao `main`, `develop` khi co thay doi trong `model_pipeline/`; lich hang tuan **Thu Hai 02:00 UTC**
+
+```
+Spin up MinIO (Docker service)
+        │
+Start MLflow tracking server (SQLite + MinIO S3)
+        │
+pytest src/tests/integration  (timeout 300s moi test)
+```
+
+| Chi tiet | Gia tri |
+|---|---|
+| MLflow backend | SQLite in-memory + MinIO bucket `mlflow` |
+| Timeout moi test | 300 giay |
+| Artifact giu lai | `junit-integration.xml` + `mlflow.log` (14 ngay) |
+
+> Integration test chay tren MLflow + MinIO that (khong mock) de phat hien som loi tuong thich phien ban.
+
+---
+
+### Workflow 3: Build & Push Docker Images ([docker-build.yml](.github/workflows/docker-build.yml))
+
+**Trigger:** Push len `main` hoac tag `v*.*.*` khi co thay doi trong `serving_pipeline/`, `data-simulator/`, `infra/docker/`
+
+**3 images duoc build song song:**
+
+| Image | Dockerfile | Registry |
+|---|---|---|
+| `churn-serving-api` | `serving_pipeline/Dockerfile` | `ghcr.io/<owner>/churn-serving-api` |
+| `churn-serving-ui` | `serving_pipeline/Dockerfile.ui` | `ghcr.io/<owner>/churn-serving-ui` |
+| `churn-data-simulator` | `data-simulator/Dockerfile` | `ghcr.io/<owner>/churn-data-simulator` |
+
+**Tag strategy:**
+
+| Tag | Dieu kien |
+|---|---|
+| `latest` | Push len `main` |
+| `main` | Branch name |
+| `sha-<short>` | Commit SHA |
+| `v1.2.3` / `v1.2` | Tag semver `v*.*.*` |
+
+- Cache layer: GitHub Actions cache (`type=gha`) per image, giam thoi gian build lap
+- Chi push len GHCR khi **khong phai** PR (PR chi build de check, khong push)
+
+---
+
+### Workflow 4: Security Scan ([security-scan.yml](.github/workflows/security-scan.yml))
+
+**Trigger:** Push/PR vao `main` + lich hang ngay **04:00 UTC**
+
+**2 loai scan chay song song:**
+
+| Job | Scan type | Quet gi |
+|---|---|---|
+| `fs-scan` | Filesystem | Toan bo source code + dependencies |
+| `image-scan` | Container image | 3 Docker images (serving-api, serving-ui, data-simulator) |
+
+- Tool: **Trivy v0.35.0** — quet CRITICAL va HIGH CVEs
+- `ignore-unfixed: true` — bo qua loi chua co ban va
+- Ket qua SARIF upload len **GitHub Security tab** (Code scanning alerts)
+- Artifact `.sarif` luu 14 ngay
+
+---
+
+### Lich chay tu dong
+
+| Workflow | Lich | Gio UTC |
+|---|---|---|
+| `model-tests.yml` | Hang tuan | Thu Hai 02:00 |
+| `security-scan.yml` | Hang ngay | 04:00 |
+
+---
+
+### Chay lint local
+
+```powershell
+pip install ruff==0.6.9 black==24.10.0
+
+# Kiem tra loi
+ruff check model_pipeline serving_pipeline data-pipeline data-simulator
+
+# Kiem tra format
+black --check model_pipeline serving_pipeline data-pipeline data-simulator
+
+# Tu dong fix format
+black model_pipeline serving_pipeline data-pipeline data-simulator
+```
 
 ---
 
