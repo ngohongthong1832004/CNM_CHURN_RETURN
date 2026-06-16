@@ -138,7 +138,7 @@ pydub==0.25.1
 Pygments==2.19.2
 PyJWT==2.10.1
 pykernel==0.1.6
-pyparsing==3.3.1
+pyparsing==3.3.2
 pytest==9.0.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
