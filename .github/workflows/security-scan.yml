@@ -45,7 +45,7 @@ jobs:
 
       - name: Upload filesystem scan artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-fs-sarif
           path: trivy-fs.sarif
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload image scan artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-image-${{ matrix.image.name }}-sarif
           path: trivy-${{ matrix.image.name }}.sarif
